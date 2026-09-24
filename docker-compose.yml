@@ -1,0 +1,87 @@
+name: rec-engine
+
+services:
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: "0"
+      KAFKA_PROCESS_ROLES: controller,broker
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: "6"
+      # local single node: RF/min-ISR of 3/2 is a production setting (EVT-003)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+    ports: ["29092:29092"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rec
+      POSTGRES_PASSWORD: rec
+      POSTGRES_DB: rec
+    ports: ["55432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rec"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["56379:6379"]
+    volumes: ["redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: .
+    command: uvicorn rec.api.app:app --host 0.0.0.0 --port 8000
+    environment: &backend_env
+      KAFKA_BOOTSTRAP: kafka:9092
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
+      DATA_DIR: /app/data
+      ENVIRONMENT: local
+    ports: ["8000:8000"]
+    volumes: ["./data:/app/data"]
+    depends_on:
+      kafka: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  stream:
+    build: .
+    command: python -m rec.stream.processor
+    environment: *backend_env
+    volumes: ["./data:/app/data"]
+    depends_on:
+      api: {condition: service_started}
+      kafka: {condition: service_healthy}
+
+  dashboard:
+    build: ./dashboard
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    ports: ["5173:80"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
+  redisdata:

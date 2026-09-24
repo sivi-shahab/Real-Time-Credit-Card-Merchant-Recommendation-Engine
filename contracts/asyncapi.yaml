@@ -1,0 +1,124 @@
+asyncapi: 3.0.0
+info:
+  title: Credit Card Merchant Recommendation Engine — events
+  version: 1.0.0
+  description: >
+    EVT-001..005. Every message carries the standard envelope; the payload is a typed
+    record, never a free-form object. Money is an integer in minor units.
+defaultContentType: application/json
+
+servers:
+  local:
+    host: localhost:29092
+    protocol: kafka
+    description: Docker Compose single-node KRaft broker
+
+channels:
+  ccTransactions:
+    address: cc.transactions
+    messages: { transaction: { $ref: '#/components/messages/TransactionEvent' } }
+    bindings: { kafka: { topic: cc.transactions, partitions: 6, replicas: 1 } }
+    description: Raw ingested transactions, keyed by customerId. Retention 7 days.
+  customerFeatures:
+    address: customer.features
+    messages: { update: { $ref: '#/components/messages/FeatureUpdate' } }
+    description: Feature version bump per customer, keyed by customerId. Compacted.
+  recommendationImpressions:
+    address: recommendation.impressions
+    messages: { impression: { $ref: '#/components/messages/Impression' } }
+    description: Exposure records, keyed by customerId. Retention 14 days.
+  recommendationInteractions:
+    address: recommendation.interactions
+    messages: { interaction: { $ref: '#/components/messages/Interaction' } }
+    description: Click / promo activation / redemption. Retention 14 days.
+  pipelineDlq:
+    address: pipeline.dlq
+    messages: { rejected: { $ref: '#/components/messages/Rejected' } }
+    description: Quarantined events with their reject code. Retention 14 days.
+
+operations:
+  publishTransaction:
+    action: send
+    channel: { $ref: '#/channels/ccTransactions' }
+    summary: Ingestion service and the replay simulator publish here.
+  consumeTransaction:
+    action: receive
+    channel: { $ref: '#/channels/ccTransactions' }
+    summary: >
+      Feature engine (group feature-engine). At-least-once; handling is idempotent on
+      eventId and on transactionId.
+
+components:
+  messages:
+    TransactionEvent:
+      name: TransactionEvent
+      payload:
+        type: object
+        required: [eventId, eventType, eventVersion, occurredAt, payload]
+        properties:
+          eventId: { type: string, format: uuid }
+          eventType: { type: string, enum: [transaction.created] }
+          eventVersion: { type: string }
+          occurredAt: { type: string, format: date-time }
+          producedAt: { type: string, format: date-time }
+          producer: { type: string }
+          traceparent: { type: [string, 'null'] }
+          correlationId: { type: [string, 'null'] }
+          payload:
+            type: object
+            required: [transactionId, customerId, merchantId, transactionType,
+                       amountMinor, currency, occurredAt]
+            properties:
+              transactionId: { type: string }
+              customerId: { type: string }
+              merchantId: { type: string }
+              transactionType: { type: string, enum: [PURCHASE, REFUND, REVERSAL] }
+              amountMinor:
+                type: integer
+                minimum: 1
+                description: Always positive; the type decides the effect on net spend.
+              currency: { type: string, enum: [IDR] }
+              occurredAt: { type: string, format: date-time }
+              originalTransactionId:
+                type: [string, 'null']
+                description: Required for REFUND and REVERSAL.
+              categoryCode: { type: [string, 'null'] }
+              cityCode: { type: [string, 'null'] }
+    FeatureUpdate:
+      payload:
+        type: object
+        properties:
+          customerId: { type: string }
+          featureVersion: { type: integer }
+          producedAt: { type: string, format: date-time }
+    Impression:
+      payload:
+        type: object
+        properties:
+          impressionId: { type: string }
+          requestId: { type: string }
+          customerId: { type: string }
+          merchantId: { type: string }
+          position: { type: integer }
+          modelVersion: { type: string }
+    Interaction:
+      payload:
+        type: object
+        properties:
+          impressionId: { type: string }
+          customerId: { type: string }
+          merchantId: { type: string }
+          interactionType:
+            type: string
+            enum: [CLICK, PROMO_ACTIVATION, REDEMPTION]
+    Rejected:
+      payload:
+        type: object
+        properties:
+          rejectCode:
+            type: string
+            enum: [SCHEMA_INVALID, UNKNOWN_CUSTOMER, UNKNOWN_ORIGINAL, MISSING_ORIGINAL,
+                   MISSING_CATEGORY, FUTURE_TIMESTAMP, REFUND_EXCEEDS_ORIGINAL,
+                   ALREADY_REVERSED, INVARIANT_VIOLATION]
+          detail: { type: string }
+          event: { type: object }
