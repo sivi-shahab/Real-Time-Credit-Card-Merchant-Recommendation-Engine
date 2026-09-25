@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "RejectedEvent",
+  "namespace": "id.co.bank.rec.events",
+  "doc": "pipeline.dlq (key: the rejected eventId). The rejected message is kept verbatim as JSON text: it failed validation, so it cannot be a typed record.",
+  "fields": [
+    {"name": "rejectCode", "type": "string", "doc": "Open set, e.g. SCHEMA_INVALID, UNKNOWN_CUSTOMER, REFUND_EXCEEDS_ORIGINAL. A string, not an enum, so new codes do not break readers."},
+    {"name": "detail", "type": "string"},
+    {"name": "event", "type": "string", "doc": "The original message, JSON-encoded."}
+  ]
+}

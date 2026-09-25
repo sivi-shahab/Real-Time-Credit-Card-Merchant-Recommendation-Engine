@@ -82,6 +82,22 @@ async def test_static_tokens_are_dead_outside_dev(client, monkeypatch):
     r = await client.get("/admin/v1/me", headers={"Authorization": "Bearer admin-token"})
     assert r.status_code == 401
     assert (await client.post("/bff/dev-login", json={"token": "admin-token"})).status_code == 404
+    # the forgeable cust-<id> stand-in fails closed too (threat model S-2)
+    r = await client.get("/api/v1/customer/C0000001/recommendations",
+                         headers={"Authorization": "Bearer cust-C0000001"})
+    assert r.status_code == 401
+
+
+def test_model_version_cannot_escape_the_model_directory(tmp_path, monkeypatch):
+    """Threat model T-3: the version string becomes a file name."""
+    from rec.ranking import service as ranking
+
+    (tmp_path / "models").mkdir()
+    (tmp_path / "planted.json").write_text("{}")
+    monkeypatch.setattr(settings, "model_dir", str(tmp_path / "models"))
+    for version in ("../planted", "..", "a/b", "/etc/passwd"):
+        with pytest.raises(FileNotFoundError, match="invalid model version"):
+            ranking.registry.get(version)
 
 
 def test_open_redirect_is_blocked():
@@ -244,3 +260,20 @@ def test_logs_redact_credentials():
     msg = record.getMessage()
     for secret in ("abc.def-123", "s3cr3t", "hunter2", "4111111111111111"):
         assert secret not in msg, msg
+
+
+async def test_errors_are_uniform_and_requests_are_bounded(client):
+    """Threat model I-4 / D-2: errors carry code+message+traceId and nothing internal;
+    oversized requests are refused by the schema before any work is done."""
+    admin = {"Authorization": "Bearer admin-token"}
+    r = await client.get("/admin/v1/datasets/no-such-dataset", headers=admin)
+    body = r.json()
+    assert r.status_code == 404 and set(body) == {"code", "message", "fieldErrors", "traceId"}
+    assert body["traceId"] == r.headers["x-correlation-id"]
+    assert "Traceback" not in r.text and "postgresql://" not in r.text
+    cust = {"Authorization": "Bearer cust-C0000001"}
+    r = await client.get("/api/v1/customer/C0000001/recommendations?limit=21", headers=cust)
+    assert r.status_code == 422
+    r = await client.get("/admin/v1/audit-events?limit=201",
+                         headers={"Authorization": "Bearer auditor-token"})
+    assert r.status_code == 422

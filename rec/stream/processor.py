@@ -128,8 +128,9 @@ class FeatureProcessor:
         if self.producer:
             await self.producer.send_and_wait(
                 settings.topic_dlq,
-                json.dumps({"rejectCode": code, "detail": detail, "event": raw},
-                           default=str).encode(),
+                # contracts/avro/rejected_event.avsc: the rejected message verbatim, as text
+                json.dumps({"rejectCode": code, "detail": detail,
+                            "event": json.dumps(raw, default=str)}).encode(),
                 key=str(raw.get("eventId", "")).encode(),
             )
 

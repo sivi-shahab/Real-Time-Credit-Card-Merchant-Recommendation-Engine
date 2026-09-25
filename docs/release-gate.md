@@ -22,6 +22,10 @@ production step remains · **OPEN** not met.
 | Static demo tokens dead outside dev | PASS | `test_static_tokens_are_dead_outside_dev` |
 | Dependency / SAST / SBOM in CI | PARTIAL | bandit, pip-audit (0 known vulns today), CycloneDX SBOM, `npm audit` in CI. Image signing and container scanning need the registry |
 | TLS everywhere, Kafka SASL/ACLs, Redis AUTH, encryption at rest | OPEN | local stack is plaintext; required config listed in `docs/runbooks.md` |
+| Threat model | PASS | [threat-model.md](threat-model.md): STRIDE per trust boundary; two findings fixed with tests (forgeable customer tokens now fail closed outside dev, model-version path traversal) |
+| Customer channel authentication (threat S-2) | OPEN | `cust-<id>` is a dev stand-in, refused outside local/test/ci; real mobile-channel token verification is not built |
+| Model artifact integrity between approval and load (T-4) | OPEN | record SHA-256 at training, verify at warm |
+| Event contracts: Avro + `BACKWARD_TRANSITIVE` in CI (EVT-004) | PASS | `tests/test_contracts.py`, `scripts/check_avro_compat.py` |
 | External penetration test; PCI DSS / UU PDP scoping (SEC-003) | OPEN | needs the authorised parties; nothing here claims compliance |
 
 ## Privacy

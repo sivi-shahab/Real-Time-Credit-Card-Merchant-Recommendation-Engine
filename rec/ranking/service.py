@@ -5,6 +5,7 @@ rather than simulated, and lets a model be loaded or swapped without restarting 
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,10 @@ app = FastAPI(title="Ranking Service", version="1.0.0", openapi_version="3.1.0",
               on_startup=[setup_logging])
 
 
+# A model version becomes a file name: no separators, so no path traversal.
+MODEL_VERSION = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+
+
 class _Registry:
     """Loaded boosters, keyed by model version. Small and bounded in practice."""
 
@@ -33,6 +38,8 @@ class _Registry:
         self._boosters: dict[str, xgb.Booster] = {}
 
     def get(self, model_version: str) -> xgb.Booster:
+        if not re.fullmatch(MODEL_VERSION, model_version):
+            raise FileNotFoundError(f"invalid model version {model_version!r}")
         with self._lock:
             booster = self._boosters.get(model_version)
             if booster is not None:

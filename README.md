@@ -66,7 +66,7 @@ instead of degrading them to the baseline.
 ```bash
 uv venv && uv pip install -e ".[dev]"
 docker compose up -d postgres redis
-.venv/bin/pytest tests -q          # 88 tests: unit, generator, ML, security, E2E
+.venv/bin/pytest tests -q          # 95 tests: unit, generator, ML, contract, security, E2E
 .venv/bin/ruff check rec tests scripts
 cd dashboard && npm ci && npx vitest run && npx vue-tsc --noEmit && npm run build
 ```
@@ -88,7 +88,7 @@ rec/api/           recommendation API, admin BFF, dataset jobs, RBAC
 rec/simulator/     SIM-001..003 replay with rate control and checkpoints
 rec/store/         Redis online store, Postgres master data
 dashboard/         Vue 3 + TS console (10 views)
-contracts/         frozen openapi.json, asyncapi.yaml
+contracts/         frozen openapi.json, asyncapi.yaml, avro/*.avsc (event contracts)
 rec/obs.py         JSON logs with trace ids + redaction, Prometheus metrics
 scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
                    rebuild_state.py, loadtest.py, export_openapi.py
@@ -96,6 +96,7 @@ deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
 docs/runbooks.md   one section per alert, plus restore, erasure, key rotation
 docs/release-gate.md  Fase 5 evidence pack and sign-off
+docs/threat-model.md  STRIDE per trust boundary, with evidence and open risks
 ```
 
 ## Which acceptance criteria are covered
@@ -141,6 +142,14 @@ Fase 5 additions:
 | Recovery: rebuild Redis from Postgres exactly | `test_redis_state_rebuilds_exactly_from_postgres`, `scripts/dr_drill.sh` |
 | Log redaction, injection | `test_logs_redact_credentials`, `test_sql_metacharacters_are_data_not_code` |
 
+Fase 0 completion (Avro contracts, threat model):
+
+| Requirement | Verified by |
+|-------------|-------------|
+| Every produced Kafka message fits its Avro contract (EVT-001) | `tests/test_contracts.py` — generator events, feature updates and DLQ records round-tripped through Avro binary |
+| EVT-004 `BACKWARD_TRANSITIVE` in CI | `scripts/check_avro_compat.py` against every committed version; `test_compatibility_check_rejects_breaking_changes` |
+| Threat model findings fixed | `test_static_tokens_are_dead_outside_dev` (forgeable `cust-` tokens fail closed outside dev), `test_model_version_cannot_escape_the_model_directory`, `test_errors_are_uniform_and_requests_are_bounded` |
+
 SYN-006 reproducibility, SYN-005 fault handling, RBAC, optimistic concurrency, audit
 logging, cursor pagination and envelope redaction have their own tests in the same suite.
 
@@ -183,9 +192,13 @@ are identical for every ranker. The training metadata carries this caveat explic
 
 ## Known gaps to close before customer traffic
 
-The full list with evidence and sign-off is [docs/release-gate.md](docs/release-gate.md).
-The ones that matter most:
+The full list with evidence and sign-off is [docs/release-gate.md](docs/release-gate.md);
+threats are ranked in [docs/threat-model.md](docs/threat-model.md). The ones that matter
+most:
 
+0. **The customer API has no production authentication.** `cust-<id>` tokens are a
+   forgeable stand-in and are refused outside local/test/ci; verifying the mobile
+   channel's real tokens is not built (threat S-2).
 1. **Ingestion throughput is unproven.** ~210 events/s per consumer on this host against
    the 10 000 TPS target. Fase 5 removed the Postgres ceiling (one fsync per event → one
    transaction per consumer batch); what remains is ~6 Redis round trips per event, on a

@@ -142,7 +142,10 @@ async def principal(request: Request) -> Principal:
     if token in admins:
         subject, role = admins[token]
         return Principal(subject, role, "admin")
-    if token.startswith(settings.customer_token_prefix):
+    # The cust-<id> scheme is a forgeable stand-in for the mobile channel's auth: it
+    # fails closed outside dev until real channel tokens are verified here.
+    if (token.startswith(settings.customer_token_prefix)
+            and settings.environment in DEV_ENVIRONMENTS):
         return Principal(token[len(settings.customer_token_prefix):], "Customer", "customer")
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
 

@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "FeatureUpdate",
+  "namespace": "id.co.bank.rec.events",
+  "doc": "customer.features (key: customerId, compacted). A notification, not the features: consumers re-read the online store. featureVersion only grows (EVT-003).",
+  "fields": [
+    {"name": "customerId", "type": "string"},
+    {"name": "featureVersion", "type": "long"},
+    {"name": "producedAt", "type": {"type": "long", "logicalType": "timestamp-millis"}}
+  ]
+}

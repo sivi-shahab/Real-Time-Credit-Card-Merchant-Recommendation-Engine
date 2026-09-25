@@ -23,6 +23,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }  # Avro check compares against every committed version
       - uses: astral-sh/setup-uv@v3
       - run: uv venv && uv pip install -e ".[dev]"
       - name: Lint
@@ -33,6 +34,8 @@ jobs:
         run: |
           .venv/bin/python scripts/export_openapi.py
           git diff --exit-code contracts/openapi.json
+      - name: Avro compatibility (EVT-004, BACKWARD_TRANSITIVE)
+        run: .venv/bin/python scripts/check_avro_compat.py
       # SDD 17.2 step 6-7: SAST, dependency scan, SBOM
       - name: SAST (bandit, medium+)
         run: uvx bandit -q -r rec -ll

@@ -3,8 +3,11 @@ info:
   title: Credit Card Merchant Recommendation Engine — events
   version: 1.0.0
   description: >
-    EVT-001..005. Every message carries the standard envelope; the payload is a typed
-    record, never a free-form object. Money is an integer in minor units.
+    EVT-001..005. The payload is a typed record, never a free-form object; money is an
+    integer in minor units. The Avro schemas in ./avro are the contract (EVT-004,
+    BACKWARD_TRANSITIVE, checked in CI by scripts/check_avro_compat.py). The wire is
+    JSON for now (ADR-0001): timestamps travel as ISO-8601 strings and map to Avro
+    timestamp-millis; tests/test_contracts.py round-trips every produced message.
 defaultContentType: application/json
 
 servers:
@@ -26,11 +29,15 @@ channels:
   recommendationImpressions:
     address: recommendation.impressions
     messages: { impression: { $ref: '#/components/messages/Impression' } }
-    description: Exposure records, keyed by customerId. Retention 14 days.
+    description: >
+      Reserved (EVT-002). Not produced yet: impressions arrive over REST and are stored in
+      Postgres. Gets an Avro schema when a producer exists.
   recommendationInteractions:
     address: recommendation.interactions
     messages: { interaction: { $ref: '#/components/messages/Interaction' } }
-    description: Click / promo activation / redemption. Retention 14 days.
+    description: >
+      Reserved (EVT-002). Not produced yet: interactions arrive over REST and are stored
+      in Postgres. Gets an Avro schema when a producer exists.
   pipelineDlq:
     address: pipeline.dlq
     messages: { rejected: { $ref: '#/components/messages/Rejected' } }
@@ -52,46 +59,25 @@ components:
   messages:
     TransactionEvent:
       name: TransactionEvent
+      summary: EVT-001 envelope with a typed transaction payload.
       payload:
-        type: object
-        required: [eventId, eventType, eventVersion, occurredAt, payload]
-        properties:
-          eventId: { type: string, format: uuid }
-          eventType: { type: string, enum: [transaction.created] }
-          eventVersion: { type: string }
-          occurredAt: { type: string, format: date-time }
-          producedAt: { type: string, format: date-time }
-          producer: { type: string }
-          traceparent: { type: [string, 'null'] }
-          correlationId: { type: [string, 'null'] }
-          payload:
-            type: object
-            required: [transactionId, customerId, merchantId, transactionType,
-                       amountMinor, currency, occurredAt]
-            properties:
-              transactionId: { type: string }
-              customerId: { type: string }
-              merchantId: { type: string }
-              transactionType: { type: string, enum: [PURCHASE, REFUND, REVERSAL] }
-              amountMinor:
-                type: integer
-                minimum: 1
-                description: Always positive; the type decides the effect on net spend.
-              currency: { type: string, enum: [IDR] }
-              occurredAt: { type: string, format: date-time }
-              originalTransactionId:
-                type: [string, 'null']
-                description: Required for REFUND and REVERSAL.
-              categoryCode: { type: [string, 'null'] }
-              cityCode: { type: [string, 'null'] }
+        schemaFormat: application/vnd.apache.avro;version=1.9.0
+        schema: { $ref: './avro/transaction_event.avsc' }
     FeatureUpdate:
+      name: FeatureUpdate
+      summary: Feature version bump; consumers re-read the online store.
       payload:
-        type: object
-        properties:
-          customerId: { type: string }
-          featureVersion: { type: integer }
-          producedAt: { type: string, format: date-time }
+        schemaFormat: application/vnd.apache.avro;version=1.9.0
+        schema: { $ref: './avro/feature_update.avsc' }
+    Rejected:
+      name: RejectedEvent
+      summary: Quarantined message with its reject code; the original is kept as JSON text.
+      payload:
+        schemaFormat: application/vnd.apache.avro;version=1.9.0
+        schema: { $ref: './avro/rejected_event.avsc' }
     Impression:
+      name: Impression
+      summary: Reserved; see channel description.
       payload:
         type: object
         properties:
@@ -102,6 +88,8 @@ components:
           position: { type: integer }
           modelVersion: { type: string }
     Interaction:
+      name: Interaction
+      summary: Reserved; see channel description.
       payload:
         type: object
         properties:
@@ -111,14 +99,3 @@ components:
           interactionType:
             type: string
             enum: [CLICK, PROMO_ACTIVATION, REDEMPTION]
-    Rejected:
-      payload:
-        type: object
-        properties:
-          rejectCode:
-            type: string
-            enum: [SCHEMA_INVALID, UNKNOWN_CUSTOMER, UNKNOWN_ORIGINAL, MISSING_ORIGINAL,
-                   MISSING_CATEGORY, FUTURE_TIMESTAMP, REFUND_EXCEEDS_ORIGINAL,
-                   ALREADY_REVERSED, INVARIANT_VIOLATION]
-          detail: { type: string }
-          event: { type: object }
