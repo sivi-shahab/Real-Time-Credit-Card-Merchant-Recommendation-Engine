@@ -8,13 +8,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from prometheus_client import start_http_server
 from pydantic import ValidationError
 
 from rec.core.ledger import LATE_ARRIVAL_LIMIT_HOURS, Reject, apply_event
 from rec.core.models import Envelope
+from rec.obs import EVENTS, setup_logging
 from rec.settings import settings
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
@@ -25,13 +28,44 @@ log = logging.getLogger("stream")
 class FeatureProcessor:
     """Handles one event. Ordering per customer comes from Kafka keying."""
 
-    def __init__(self, store: OnlineStore, producer: AIOKafkaProducer | None = None):
+    def __init__(self, store: OnlineStore, producer: AIOKafkaProducer | None = None, *,
+                 batch: bool = False):
+        """batch=True buffers transaction_log rows and counters until flush(); the Kafka
+        loop flushes before committing offsets. Otherwise every handle() flushes."""
         self.store = store
         self.producer = producer
+        self.batch = batch
         self._known_customers: set[str] = set()
+        self._log_rows: list[tuple] = []
+        self._counts: Counter[str] = Counter()
 
     async def handle(self, raw: dict, *, now: datetime | None = None) -> str:
-        now = now or datetime.now(UTC)
+        outcome = await self._handle(raw, now or datetime.now(UTC))
+        if not self.batch:
+            await self.flush()
+        return outcome
+
+    async def flush(self) -> None:
+        # ponytail: Redis state is written before its log row is flushed, so a crash in
+        # between re-logs those events as DUPLICATE_EVENT on redelivery. Features stay
+        # exact; only the log outcome is off. Outbox table if that audit trail must be exact.
+        rows, self._log_rows = self._log_rows, []
+        counts, self._counts = self._counts, Counter()
+        await pg.log_transactions(rows)
+        await self.store.incr_metrics(counts)
+
+    def _log(self, raw: dict, outcome: str, code: str | None = None,
+             detail: str | None = None) -> None:
+        self._log_rows.append(pg.transaction_row(raw, outcome, code, detail))
+
+    async def _handle(self, raw: dict, now: datetime) -> str:
+        # AC-009 before anything else, invalid events included: quarantining logs the
+        # raw envelope, which would re-store the very data that was erased.
+        payload = raw.get("payload")
+        raw_customer = payload.get("customerId") if isinstance(payload, dict) else None
+        if isinstance(raw_customer, str) and await self.store.is_erased(raw_customer):
+            self._counts["events_erased_customer"] += 1
+            return "ERASED_CUSTOMER"
         try:
             env = Envelope.model_validate(raw)
             env.transaction()
@@ -41,12 +75,17 @@ class FeatureProcessor:
 
         customer_id = env.payload["customerId"]
         if not await self._customer_known(customer_id):
+            if customer_id in await pg.erased_customers():
+                # Redis lost its tombstone copy (e.g. before a rebuild): Postgres decides.
+                await self.store.load_tombstones([customer_id])
+                self._counts["events_erased_customer"] += 1
+                return "ERASED_CUSTOMER"
             await self._quarantine(raw, "UNKNOWN_CUSTOMER", customer_id)
             return "UNKNOWN_CUSTOMER"
 
         if not await self.store.claim_event(env.eventId):
-            await pg.log_transaction(raw, "DUPLICATE_EVENT")
-            await self.store.incr_metric("events_duplicate")
+            self._log(raw, "DUPLICATE_EVENT")
+            self._counts["events_duplicate"] += 1
             return "DUPLICATE_EVENT"
 
         state = await self.store.load(customer_id)
@@ -63,13 +102,12 @@ class FeatureProcessor:
 
         lateness = now - env.occurredAt.astimezone(UTC)
         if lateness > timedelta(hours=LATE_ARRIVAL_LIMIT_HOURS):
-            await self.store.incr_metric("events_late_backfill")
+            self._counts["events_late_backfill"] += 1
 
         await self.store.save(state, now)
         await self.store.invalidate_customer(customer_id)  # SERV-004
-        await pg.log_transaction(raw, outcome)
-        await self.store.incr_metric("events_applied" if outcome == "APPLIED"
-                                     else "events_duplicate")
+        self._log(raw, outcome)
+        self._counts["events_applied" if outcome == "APPLIED" else "events_duplicate"] += 1
         await self._emit_feature_update(customer_id, state.featureVersion)
         return outcome
 
@@ -84,9 +122,9 @@ class FeatureProcessor:
         return True
 
     async def _quarantine(self, raw: dict, code: str, detail: str) -> None:
-        await pg.log_transaction(raw, "QUARANTINED", code, detail)
-        await self.store.incr_metric("events_quarantined")
-        await self.store.incr_metric(f"quarantine_{code}")
+        self._log(raw, "QUARANTINED", code, detail)
+        self._counts["events_quarantined"] += 1
+        self._counts[f"quarantine_{code}"] += 1
         if self.producer:
             await self.producer.send_and_wait(
                 settings.topic_dlq,
@@ -109,7 +147,8 @@ class FeatureProcessor:
 
 
 async def run() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    setup_logging()
+    start_http_server(9102)  # Prometheus scrape for the consumer
     store = OnlineStore()
     consumer = AIOKafkaConsumer(
         settings.topic_transactions,
@@ -120,9 +159,10 @@ async def run() -> None:
     )
     producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap,
                                 enable_idempotence=True, acks="all")
+    await store.load_tombstones(await pg.erased_customers())
     await consumer.start()
     await producer.start()
-    processor = FeatureProcessor(store, producer)
+    processor = FeatureProcessor(store, producer, batch=True)
     log.info("feature engine consuming %s", settings.topic_transactions)
     # Bounded: unbounded gather exhausts the Redis and Postgres pools.
     gate = asyncio.Semaphore(settings.stream_concurrency)
@@ -151,12 +191,13 @@ async def run() -> None:
             async def _drain(events: list[dict]) -> None:
                 for raw in events:
                     try:
-                        await processor.handle(raw)
+                        EVENTS.labels(await processor.handle(raw)).inc()
                     except Exception:  # keep the consumer alive; the event is logged
                         log.exception("handler failed for event %s", raw.get("eventId"))
                         await store.incr_metric("handler_errors")
 
             await asyncio.gather(*(run(events) for events in by_customer.values()))
+            await processor.flush()  # log rows land before the offsets move
             # At-least-once: handling is idempotent, so a replayed batch is a no-op.
             await consumer.commit()
     finally:

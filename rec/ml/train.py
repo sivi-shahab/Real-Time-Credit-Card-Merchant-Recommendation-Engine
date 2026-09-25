@@ -103,9 +103,10 @@ def train(
     test_fraction: float = 0.25,
     mlflow_tracking_uri: str | None = None,
     experiment: str = "merchant-ranking",
+    exclude_customers: frozenset[str] = frozenset(),
 ) -> TrainingResult:
     out_dir.mkdir(parents=True, exist_ok=True)
-    frame, dataset_meta = build(dataset_dir)
+    frame, dataset_meta = build(dataset_dir, exclude_customers=exclude_customers)
     if frame.empty:
         raise ValueError("no observable exposures in this dataset — nothing to train on")
 

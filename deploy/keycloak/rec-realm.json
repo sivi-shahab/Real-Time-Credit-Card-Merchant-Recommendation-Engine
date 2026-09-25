@@ -1,0 +1,216 @@
+{
+  "realm": "rec",
+  "enabled": true,
+  "ssoSessionIdleTimeout": 1800,
+  "accessTokenLifespan": 300,
+  "bruteForceProtected": true,
+  "passwordPolicy": "length(12)",
+  "roles": {
+    "realm": [
+      {
+        "name": "Viewer"
+      },
+      {
+        "name": "Analyst"
+      },
+      {
+        "name": "Marketing Operator"
+      },
+      {
+        "name": "ML Engineer"
+      },
+      {
+        "name": "Platform Operator"
+      },
+      {
+        "name": "Approver"
+      },
+      {
+        "name": "Auditor"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "rec-dashboard",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "local-dev-secret-change-me",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/bff/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/login"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "config": {
+            "claim.name": "roles",
+            "multivalued": "true",
+            "jsonType.label": "String",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "false",
+            "access.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "viewer",
+      "enabled": true,
+      "email": "viewer@rec.local",
+      "emailVerified": true,
+      "firstName": "viewer",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "viewer-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Viewer"
+      ]
+    },
+    {
+      "username": "analyst",
+      "enabled": true,
+      "email": "analyst@rec.local",
+      "emailVerified": true,
+      "firstName": "analyst",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "analyst-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Analyst"
+      ]
+    },
+    {
+      "username": "marketing",
+      "enabled": true,
+      "email": "marketing@rec.local",
+      "emailVerified": true,
+      "firstName": "marketing",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "marketing-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Marketing Operator"
+      ]
+    },
+    {
+      "username": "mlengineer",
+      "enabled": true,
+      "email": "mlengineer@rec.local",
+      "emailVerified": true,
+      "firstName": "mlengineer",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "mlengineer-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ML Engineer"
+      ]
+    },
+    {
+      "username": "operator",
+      "enabled": true,
+      "email": "operator@rec.local",
+      "emailVerified": true,
+      "firstName": "operator",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "operator-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Platform Operator"
+      ]
+    },
+    {
+      "username": "approver",
+      "enabled": true,
+      "email": "approver@rec.local",
+      "emailVerified": true,
+      "firstName": "approver",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "approver-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Approver"
+      ]
+    },
+    {
+      "username": "auditor",
+      "enabled": true,
+      "email": "auditor@rec.local",
+      "emailVerified": true,
+      "firstName": "auditor",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "auditor-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "Auditor"
+      ]
+    },
+    {
+      "username": "conflicted",
+      "enabled": true,
+      "email": "conflicted@rec.local",
+      "emailVerified": true,
+      "firstName": "conflicted",
+      "lastName": "Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "conflicted-local-pass",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "ML Engineer",
+        "Approver"
+      ]
+    }
+  ]
+}

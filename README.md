@@ -1,9 +1,13 @@
 # Credit Card Merchant Recommendation Engine
 
-Implementation of `sdd_recomendation_engine.md`, **Fase 1–4**: synthetic data → Kafka
+Implementation of `sdd_recomendation_engine.md`, **Fase 1–5**: synthetic data → Kafka
 replay → streaming feature engine → candidate generation + promo eligibility → baseline
 or XGBoost Learning-to-Rank → recommendation API → Vue 3 operations console, with
-feedback collection, attribution, training, evaluation gates and shadow/canary rollout.
+feedback collection, attribution, training, evaluation gates and shadow/canary rollout,
+hardened with SSO, audit, observability, automatic rollback, erasure and practised
+recovery. **Fase 5 is built; its exit gate is not yet approved** — see
+[docs/release-gate.md](docs/release-gate.md) for what passed, what is open, and the
+sign-off table.
 
 Stack deviation from the SDD is deliberate and documented in
 [ADR-0001](docs/adr/0001-python-first-stack.md): the services are Python (FastAPI +
@@ -15,28 +19,42 @@ re-implemented on the JVM behind the same contract.
 
 ```bash
 cp .env.example .env
-docker compose up -d --build          # kafka, postgres, redis, api, stream, dashboard
+docker compose up -d --build   # kafka, postgres, redis, api, stream, ranking, mlflow,
+                               # dashboard, keycloak, prometheus
 ```
 
 | Surface   | URL                          | Notes                                |
 |-----------|------------------------------|--------------------------------------|
 | API       | http://localhost:8000        | OpenAPI at `/docs`, health at `/health` |
-| Dashboard | http://localhost:5173        | log in with a demo token below       |
+| Dashboard | http://localhost:5173        | "Masuk dengan SSO", or a demo token (local only) |
+| Keycloak  | http://localhost:8180        | realm `rec`; user `<name>` / `<name>-local-pass` |
+| Prometheus| http://localhost:9090        | scrapes api, ranking, stream; alert rules loaded |
 | Ranking   | http://localhost:8100        | batch inference, `/health` lists loaded models |
 | MLflow    | http://localhost:5000        | runs, metrics, artifacts, model registry |
 
-Demo tokens (see `ADMIN_TOKENS` in `.env`): `admin-token` (Platform Operator),
-`analyst-token` (Analyst), `ops-token` (Marketing Operator), `auditor-token` (Auditor),
-`ml-token` (ML Engineer), `approver-token` (Approver). A customer token is
-`cust-<customerId>`. Roles matter: an ML Engineer can train but not promote, and an
-Approver can promote but not train (SEC-001 separation of duties).
+**Signing in.** The browser only ever holds an opaque `HttpOnly` session cookie issued by
+the BFF (`/bff/*`, [ADR-0006](docs/adr/0006-bff-session-and-oidc.md)); mutations carry a
+CSRF token. SSO users (Keycloak, one per role): `viewer`, `analyst`, `marketing`,
+`mlengineer`, `operator`, `approver`, `auditor` — password `<user>-local-pass`. User
+`conflicted` holds ML Engineer + Approver and is refused at login by design.
+
+Demo bearer tokens work only when `ENVIRONMENT` is local/test/ci, for scripts and the
+local "demo token" login: `admin-token` (Platform Operator), `analyst-token`,
+`ops-token` (Marketing Operator), `auditor-token`, `ml-token` (ML Engineer),
+`approver-token`, `viewer-token`. A customer token is `cust-<customerId>`. Roles matter:
+an ML Engineer can train but not promote, an Approver can promote but not train, and an
+erasure is filed by one person and approved by another (SEC-001).
 
 End-to-end proof on the running stack — generate, replay through Kafka, serve, reconcile:
 
 ```bash
 bash scripts/smoke_e2e.sh     # data path: generate, replay, serve, reconcile
 bash scripts/smoke_ml.sh      # ML path: train, gate, promote, serve, degrade, rollback
+bash scripts/chaos.sh         # Redis loss, ranking loss, consumer SIGKILL + broker loss
+bash scripts/dr_drill.sh      # backup, destroy, restore, rebuild Redis, verify identical
+python scripts/loadtest.py api --concurrency 8 --seconds 30   # latency/throughput
 ```
+The scripts call `python3`; run them with the venv active (or `.venv/bin` on `PATH`).
 
 `smoke_e2e.sh` fails loudly if online aggregates diverge from an offline recomputation
 (AC-008). `smoke_ml.sh` fails if a model is promoted without passing its gates, if the
@@ -48,13 +66,15 @@ instead of degrading them to the baseline.
 ```bash
 uv venv && uv pip install -e ".[dev]"
 docker compose up -d postgres redis
-.venv/bin/pytest tests -q          # 36 tests: unit, generator, integration, E2E
+.venv/bin/pytest tests -q          # 88 tests: unit, generator, ML, security, E2E
 .venv/bin/ruff check rec tests scripts
 cd dashboard && npm ci && npx vitest run && npx vue-tsc --noEmit && npm run build
 ```
 
-`tests/test_e2e.py` needs Postgres and Redis; the ports are remapped to **55432** and
-**56379** to avoid clashing with anything already local.
+`tests/test_e2e.py` and `tests/test_security.py` need Postgres and Redis; the ports are
+remapped to **55432** and **56379**. Tests use their own database (`rec_test`, created on
+first run) and Redis DB 1, because the E2E fixture truncates tables — it must never touch
+the running stack's data.
 
 ## Layout
 
@@ -69,8 +89,13 @@ rec/simulator/     SIM-001..003 replay with rate control and checkpoints
 rec/store/         Redis online store, Postgres master data
 dashboard/         Vue 3 + TS console (10 views)
 contracts/         frozen openapi.json, asyncapi.yaml
-scripts/           reconcile.py (AC-008), smoke_e2e.sh, export_openapi.py
+rec/obs.py         JSON logs with trace ids + redaction, Prometheus metrics
+scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
+                   rebuild_state.py, loadtest.py, export_openapi.py
+deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
+docs/runbooks.md   one section per alert, plus restore, erasure, key rotation
+docs/release-gate.md  Fase 5 evidence pack and sign-off
 ```
 
 ## Which acceptance criteria are covered
@@ -102,6 +127,20 @@ Fase 4 additions:
 | Canary share and per-customer stability | `test_canary_routes_only_its_share_and_is_stable_per_customer`, `test_canary_split_is_deterministic_and_roughly_proportional` |
 | Rollback path and audit | `test_rollback_returns_to_previous_then_to_baseline`, `test_model_endpoints_are_audited` |
 
+Fase 5 additions:
+
+| Requirement | Verified by |
+|-------------|-------------|
+| AC-009 erasure: maker-checker, nothing rematerialised by replay or reload | `test_ac009_erased_customer_is_not_rematerialised_by_replay` |
+| SDD 13.4 BFF: HttpOnly session, CSRF, server-side logout, no URL token | `test_session_cookie_is_httponly_and_carries_no_token`, `test_mutation_without_csrf_token_is_refused`, `test_logout_kills_the_session_server_side`, `test_sse_no_longer_accepts_a_token_in_the_url` |
+| OIDC code + PKCE, nonce/audience checks, one role per identity | `test_oidc_code_flow_creates_a_session`, `test_oidc_rejects_wrong_nonce_audience_or_role_set`, `test_one_identity_one_role` |
+| RBAC on every admin route × role; denials audited | `test_every_admin_route_is_guarded`, `test_rbac_matrix_every_role_every_route`, `test_denials_are_audited` |
+| Audit cannot be rewritten | `test_audit_log_cannot_be_rewritten` |
+| Automatic canary/full rollback on guardrail breach | `test_guardrail_rolls_back_a_failing_live_model`, `test_guardrail_p95_is_a_conservative_bucket_bound` |
+| Resilience: Redis loss, broker loss | `test_redis_loss_degrades_to_popular_not_to_an_error`, `test_simulator_never_skips_an_event_when_the_broker_fails`, `scripts/chaos.sh` |
+| Recovery: rebuild Redis from Postgres exactly | `test_redis_state_rebuilds_exactly_from_postgres`, `scripts/dr_drill.sh` |
+| Log redaction, injection | `test_logs_redact_credentials`, `test_sql_metacharacters_are_data_not_code` |
+
 SYN-006 reproducibility, SYN-005 fault handling, RBAC, optimistic concurrency, audit
 logging, cursor pagination and envelope redaction have their own tests in the same suite.
 
@@ -127,12 +166,15 @@ top-10 cut keeps the whole slate: `recall@10` is trivially 1.0 and coverage/dive
 are identical for every ranker. The training metadata carries this caveat explicitly
 (`lineage.metricCaveat`) and the dashboard renders it.
 
-## Not built (out of the agreed Fase 1–4 scope)
+## Not built
 
-- **Fase 5 — hardening.** SSO/OIDC, TLS, Kafka SASL/ACLs, secret manager, key rotation,
-  load and resilience tests, automated canary guardrail rollback, backup/restore runbooks.
-- **AC-009 (data deletion)** — erasure across cache, feature store and archive is not
-  implemented.
+- **Production platform controls.** TLS on every hop, Kafka SASL/ACLs, Redis AUTH,
+  encryption at rest, image signing, a non-owner DB role, PITR. The local stack is
+  plaintext; `docs/runbooks.md` lists what production must set.
+- **Machine-to-machine admin credentials.** Scripts use static tokens, which only work in
+  local/test/ci. Production automation needs OIDC client credentials.
+- **Distributed tracing.** A `traceId` joins errors, logs and audit rows, but there is no
+  OpenTelemetry span propagation across api → ranking.
 - **Live-feedback training.** Training reads a dataset directory, which is what makes it
   reproducible. The API records impressions and interactions into Postgres, but there is
   no exporter turning that live feedback into a training dataset yet.
@@ -141,27 +183,33 @@ are identical for every ranker. The training metadata carries this caveat explic
 
 ## Known gaps to close before customer traffic
 
-1. **Auth.** SDD 13.4 requires a BFF with an `HttpOnly` session cookie and CSRF
-   protection. This build uses bearer tokens held in `sessionStorage`, and SSE passes the
-   token as a query parameter because `EventSource` cannot set headers. Backend RBAC is
-   real and enforced (`rec/api/auth.py`); the token transport is not production-grade.
-2. **Ingestion throughput.** Measured ~120 events/s locally against the 10 000 TPS
-   target. The ceiling is one Postgres INSERT per event into `transaction_log`
-   (`rec/store/pg.py`); reaching the NFR needs a batched COPY sink or an async archive
-   writer, plus a real load test.
-3. **Exactly-once.** At-least-once with idempotent handling, per
+The full list with evidence and sign-off is [docs/release-gate.md](docs/release-gate.md).
+The ones that matter most:
+
+1. **Ingestion throughput is unproven.** ~210 events/s per consumer on this host against
+   the 10 000 TPS target. Fase 5 removed the Postgres ceiling (one fsync per event → one
+   transaction per consumer batch); what remains is ~6 Redis round trips per event, on a
+   host where Redis itself benchmarks at ~10k ops/s. The design scales by partition (6)
+   and consumer replicas; that needs a load test on representative hardware.
+2. **API latency holds only at low concurrency here.** 8 clients: p95 72 ms at 162 rps.
+   32 clients: p95 ~1 s — one uvicorn worker plus the load generator on the same WSL host.
+   The customer API should run as its own horizontally scaled deployment; the admin API
+   cannot simply add workers because the simulator keeps run state in-process.
+3. **id_token signature is not verified.** Safe only because it comes straight from the
+   token endpoint over the back channel, and only if that channel is TLS in production
+   (ADR-0006).
+4. **Erasure scope.** Kafka retention, dataset files on disk (filtered on read, not
+   rewritten), MLflow artifacts of older models and immutable audit rows are outside the
+   automated erasure; a restore from a backup older than an erasure brings the customer
+   back until the erasure is re-run (`docs/runbooks.md#erasure`).
+5. **Exactly-once.** At-least-once with idempotent handling, per
    [ADR-0003](docs/adr/0003-at-least-once-with-idempotent-handling.md). Dedup is bounded
-   by a 7-day TTL.
-4. **Single-node local Kafka.** `replication.factor=1`; production needs RF 3 / min-ISR 2.
-5. **Late-event policy.** Arrivals beyond 24 h are counted and applied, not routed to a
+   by a 7-day TTL. With batched logging, a crash between the Redis write and the log flush
+   re-logs those events as `DUPLICATE_EVENT`; features stay exact.
+6. **Single-node local Kafka.** `replication.factor=1`; production needs RF 3 / min-ISR 2.
+7. **Late-event policy.** Arrivals beyond 24 h are counted and applied, not routed to a
    separate correction/backfill path (FEAT-003).
-6. **Ranking latency is unmeasured here.** In-process prediction over 200 candidates is
-   ~0.7 ms p95. The same call through the containerised service on this host ranged from
-   13 ms to 157 ms for identical input — host contention, not code. `nthread` is pinned to
-   2 because XGBoost's default 16-thread pool costs more to start than it saves on 200
-   rows, but the p95 <500 ms NFR needs a real load test on representative hardware before
-   anyone should believe a number.
-7. **Promo quota in training rows.** Historical eligibility uses current `quota_used`;
+8. **Promo quota in training rows.** Historical eligibility uses current `quota_used`;
    point-in-time quota exhaustion is not reconstructable from the master table.
 
 ## Synthetic data is simulation, not evidence

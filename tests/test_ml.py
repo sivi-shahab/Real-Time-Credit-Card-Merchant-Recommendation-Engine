@@ -167,3 +167,11 @@ def test_canary_split_is_deterministic_and_roughly_proportional():
     share = sum(in_canary(i, 25) for i in ids) / len(ids)
     assert 0.21 < share < 0.29, share
     assert all(in_canary(i, 25) == in_canary(i, 25) for i in ids[:100])
+
+
+def test_guardrail_p95_is_a_conservative_bucket_bound():
+    from rec.ml.guardrail import evaluate, p95_upper_ms
+
+    assert p95_upper_ms({"lat_50": 95, "lat_1000": 5}) == 50
+    assert p95_upper_ms({"lat_50": 90, "lat_1000": 10}) == 1000
+    assert evaluate({"requests": 3, "degraded": 3}) == [], "too little data to judge"

@@ -181,3 +181,42 @@ CREATE TABLE IF NOT EXISTS shadow_evaluations (
   occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS shadow_time ON shadow_evaluations (occurred_at DESC);
+
+-- ===== Fase 5: hardening =====
+-- Audit is append-only for the application role too (REVOKE above does not bind the
+-- table owner). A DBA with owner rights can still drop this trigger; in production the
+-- app connects as a non-owner role — see docs/runbooks.md.
+CREATE OR REPLACE FUNCTION audit_is_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_events is append-only';
+END $$;
+CREATE OR REPLACE TRIGGER audit_append_only BEFORE UPDATE OR DELETE ON audit_events
+  FOR EACH ROW EXECUTE FUNCTION audit_is_append_only();
+
+-- AC-009 / SEC-002: erasure is maker-checker. The requester cannot approve their own.
+CREATE TABLE IF NOT EXISTS erasure_requests (
+  request_id   TEXT PRIMARY KEY,
+  customer_id  TEXT NOT NULL,
+  reason       TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'PENDING'
+               CHECK (status IN ('PENDING','EXECUTED','REJECTED')),
+  requested_by TEXT NOT NULL,
+  decided_by   TEXT,
+  result       JSONB,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  decided_at   TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS erasure_one_pending
+  ON erasure_requests (customer_id) WHERE status = 'PENDING';
+
+-- Tombstones: all that remains of an erased customer is the fact of erasure, so a
+-- replay or master-data reload can refuse to materialise them again.
+CREATE TABLE IF NOT EXISTS erased_customers (
+  customer_id TEXT PRIMARY KEY,
+  request_id  TEXT NOT NULL,
+  erased_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Processing order for state rebuild. received_at is per flush batch since Fase 5
+-- batching, so it cannot order a customer's events on its own. (expand-only change)
+ALTER TABLE transaction_log ADD COLUMN IF NOT EXISTS seq BIGSERIAL;

@@ -12,14 +12,17 @@ from threading import RLock
 
 import numpy as np
 import xgboost as xgb
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Response, status
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from rec.ml.vectorize import FEATURE_NAMES
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
+from rec.obs import INFERENCE_LATENCY, setup_logging
 from rec.settings import settings
 
-app = FastAPI(title="Ranking Service", version="1.0.0", openapi_version="3.1.0")
+app = FastAPI(title="Ranking Service", version="1.0.0", openapi_version="3.1.0",
+              on_startup=[setup_logging])
 
 
 class _Registry:
@@ -95,10 +98,16 @@ def score(body: ScoreRequest) -> ScoreResponse:
     started = time.perf_counter()
     scores = booster.predict(xgb.DMatrix(rows, feature_names=list(FEATURE_NAMES)))
     elapsed = (time.perf_counter() - started) * 1000
+    INFERENCE_LATENCY.labels(body.modelVersion).observe(elapsed / 1000)
     return ScoreResponse(
         modelVersion=body.modelVersion, featureSchemaVersion=VECTOR_SCHEMA_VERSION,
         scores=[float(s) for s in scores], inferenceMs=round(elapsed, 3),
         scoredAt=datetime.now(UTC))
+
+
+@app.get("/metrics", include_in_schema=False)
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health", tags=["ops"])

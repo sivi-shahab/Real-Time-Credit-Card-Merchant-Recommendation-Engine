@@ -1,0 +1,33 @@
+# Thresholds mirror SDD 15 NFRs. Each alert names its runbook section (docs/runbooks.md).
+groups:
+  - name: rec-engine
+    rules:
+      - alert: RecommendationLatencyP95High
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{route="/api/v1/customer/{customer_id}/recommendations"}[5m]))) > 0.2
+        for: 10m
+        labels: {severity: page}
+        annotations: {summary: "Recommendation API p95 > 200 ms", runbook: "docs/runbooks.md#api-latency"}
+      - alert: RecommendationFallbackRateHigh
+        expr: sum(rate(recommendations_total{source="FALLBACK"}[5m])) / sum(rate(recommendations_total[5m])) > 0.05
+        for: 10m
+        labels: {severity: page}
+        annotations: {summary: "More than 5% of recommendations are fallbacks", runbook: "docs/runbooks.md#fallback-rate"}
+      - alert: ApiErrorRateHigh
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m
+        labels: {severity: page}
+        annotations: {summary: "API 5xx rate > 1% (99.9% availability budget burning)", runbook: "docs/runbooks.md#api-errors"}
+      - alert: GuardrailRolledBack
+        expr: increase(guardrail_rollbacks_total[15m]) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "A model was rolled back automatically", runbook: "docs/runbooks.md#model-rollback"}
+      - alert: StreamQuarantineSpike
+        expr: sum(rate(stream_events_total{outcome!~"APPLIED|DUPLICATE_EVENT|ERASED_CUSTOMER"}[5m])) / sum(rate(stream_events_total[5m])) > 0.05
+        for: 10m
+        labels: {severity: ticket}
+        annotations: {summary: "More than 5% of events quarantined", runbook: "docs/runbooks.md#quarantine"}
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: page}
+        annotations: {summary: "{{ $labels.job }} is not being scraped", runbook: "docs/runbooks.md#service-down"}

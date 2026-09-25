@@ -3,24 +3,32 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
+import asyncpg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from rec.api import jobs, ml_jobs, service
+from rec.api import bff, jobs, ml_jobs, service
 from rec.api.auth import Principal, customer_self, principal, require
-from rec.core.models import FEATURE_SCHEMA_VERSION, RANKING_CONFIG_VERSION
+from rec.core.models import (
+    FEATURE_SCHEMA_VERSION,
+    RANKING_CONFIG_VERSION,
+    RecommendationResponse,
+)
 from rec.core.ranking import DEFAULT_RESULTS, MAX_RESULTS
 from rec.generator.config import DatasetConfig
 from rec.ml import client as ranking_client
-from rec.ml import registry
+from rec.ml import guardrail, registry
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
+from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, setup_logging, trace_id_var
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
@@ -30,8 +38,11 @@ store = OnlineStore()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    setup_logging()
     await pg.pool()
+    watcher = asyncio.create_task(guardrail.loop(store))
     yield
+    watcher.cancel()
     await ranking_client.close()
     await store.close()
     await pg.close()
@@ -50,13 +61,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(bff.router)
 
 
 @app.middleware("http")
 async def correlation(request: Request, call_next):
     trace_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
     request.state.trace_id = trace_id
+    trace_id_var.set(trace_id)
+    t0 = time.perf_counter()
     response = await call_next(request)
+    route = getattr(request.scope.get("route"), "path", "unmatched")
+    HTTP_REQUESTS.labels(request.method, route, str(response.status_code)).inc()
+    HTTP_LATENCY.labels(route).observe(time.perf_counter() - t0)
     response.headers["x-correlation-id"] = trace_id
     return response
 
@@ -86,7 +103,8 @@ def _code(status_code: int) -> str:
 # ===================================================================== customer API
 
 
-@app.get("/api/v1/customer/{customer_id}/recommendations", tags=["customer"])
+@app.get("/api/v1/customer/{customer_id}/recommendations", tags=["customer"],
+         response_model=RecommendationResponse)
 async def get_recommendations(
     customer_id: str,
     p: Annotated[Principal, Depends(customer_self)],
@@ -102,7 +120,8 @@ async def get_recommendations(
         )
     except KeyError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"customer {customer_id} not found")
-    return response
+    # pydantic-core serialises directly; FastAPI's jsonable_encoder walk cost ~2 ms here
+    return Response(response.model_dump_json(), media_type="application/json")
 
 
 class ImpressionBatch(BaseModel):
@@ -554,6 +573,9 @@ async def promote_model(model_version: str, body: PromoteRequest, request: Reque
             model_version, mode=body.mode, canary_percent=body.canaryPercent,
             actor=p.subject, note=body.note)
     except registry.PromotionRefused as exc:
+        await pg.audit(p.subject, p.role, "model.promote", f"model/{model_version}",
+                       outcome="REJECTED", changes=body.model_dump() | {"reason": str(exc)},
+                       trace_id=request.state.trace_id)
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     await store.invalidate_all_recommendations()  # SERV-004: model version is in the key
     await pg.audit(p.subject, p.role, "model.promote", f"model/{model_version}",
@@ -571,6 +593,12 @@ async def rollback_model(model_version: str, request: Request,
                    changes={"note": note, "now": deployment.get("mode")},
                    trace_id=request.state.trace_id)
     return deployment
+
+
+@app.get("/admin/v1/models/guardrail/status", tags=["models"])
+async def guardrail_status(p: Annotated[Principal, Depends(require("model:read"))]):
+    """Live-arm health the automatic rollback acts on (SDD 17.2 step 14)."""
+    return await guardrail.status(store.r)
 
 
 @app.get("/admin/v1/models/shadow/summary", tags=["models"])
@@ -648,6 +676,85 @@ async def audit_events(p: Annotated[Principal, Depends(require("audit:read"))],
     return {"items": items, "nextCursor": items[-1]["id"] if len(items) == limit else None}
 
 
+# ===================================================================== erasure (AC-009)
+
+
+class ErasureRequest(BaseModel):
+    customerId: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@app.post("/admin/v1/erasure-requests", status_code=201, tags=["privacy"])
+async def request_erasure(body: ErasureRequest, request: Request,
+                          p: Annotated[Principal, Depends(require("erasure:request"))]):
+    conn = await pg.pool()
+    request_id = str(uuid.uuid4())
+    try:
+        await conn.execute(
+            """INSERT INTO erasure_requests (request_id, customer_id, reason, requested_by)
+               VALUES ($1,$2,$3,$4)""", request_id, body.customerId, body.reason, p.subject)
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(status.HTTP_409_CONFLICT, "an erasure request is already pending")
+    await pg.audit(p.subject, p.role, "erasure.request", f"customer/{body.customerId}",
+                   changes={"requestId": request_id, "reason": body.reason},
+                   trace_id=request.state.trace_id)
+    return {"requestId": request_id, "status": "PENDING"}
+
+
+@app.get("/admin/v1/erasure-requests", tags=["privacy"])
+async def list_erasures(p: Annotated[Principal, Depends(require("erasure:read"))],
+                        limit: int = Query(50, le=200)):
+    conn = await pg.pool()
+    rows = await conn.fetch("SELECT * FROM erasure_requests ORDER BY created_at DESC LIMIT $1",
+                            limit)
+    return [dict(r) | {"result": json.loads(r["result"]) if r["result"] else None}
+            for r in rows]
+
+
+class ErasureDecision(BaseModel):
+    approve: bool
+    note: str | None = Field(None, max_length=500)
+
+
+@app.post("/admin/v1/erasure-requests/{request_id}/decision", tags=["privacy"])
+async def decide_erasure(request_id: str, body: ErasureDecision, request: Request,
+                         p: Annotated[Principal, Depends(require("erasure:approve"))]):
+    """Approval executes immediately: Postgres rows go in one transaction with the
+    tombstone, then Redis state and cache. Audit rows are kept (immutable, and they hold
+    only the pseudonymous id) — see docs/runbooks.md."""
+    conn = await pg.pool()
+    row = await conn.fetchrow("SELECT * FROM erasure_requests WHERE request_id=$1", request_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "erasure request not found")
+    if row["status"] != "PENDING":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"request is {row['status']}")
+    if row["requested_by"] == p.subject:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "requester cannot approve own request")
+    customer_id = row["customer_id"]
+    result: dict = {}
+    if body.approve:
+        await store.load_tombstones([customer_id])  # stop the stream before deleting
+        async with conn.acquire() as con, con.transaction():
+            await con.execute("""INSERT INTO erased_customers (customer_id, request_id)
+                                 VALUES ($1,$2) ON CONFLICT DO NOTHING""",
+                              customer_id, request_id)
+            for table in ("transaction_log", "impressions", "interactions",
+                          "shadow_evaluations", "customers"):
+                sql = f"DELETE FROM {table} WHERE customer_id=$1"  # nosec B608
+                tag = await con.execute(sql, customer_id)
+                result[table] = int(tag.split()[-1])
+        result["redisKeys"] = await store.erase_customer(customer_id)
+    await conn.execute(
+        """UPDATE erasure_requests SET status=$2, decided_by=$3, decided_at=now(), result=$4
+           WHERE request_id=$1""", request_id, "EXECUTED" if body.approve else "REJECTED",
+        p.subject, json.dumps(result | {"note": body.note}))
+    await pg.audit(p.subject, p.role, "erasure.execute" if body.approve else "erasure.reject",
+                   f"customer/{customer_id}", changes={"requestId": request_id, **result},
+                   trace_id=request.state.trace_id)
+    return {"requestId": request_id, "status": "EXECUTED" if body.approve else "REJECTED",
+            "deleted": result}
+
+
 @app.get("/admin/v1/events", tags=["ops"])
 async def sse(p: Annotated[Principal, Depends(require("metrics:read"))]):
     """SSE job/operation status. The dashboard falls back to polling on disconnect."""
@@ -664,6 +771,13 @@ async def sse(p: Annotated[Principal, Depends(require("metrics:read"))]):
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"cache-control": "no-cache",
                                       "x-accel-buffering": "no"})
+
+
+@app.get("/metrics", tags=["ops"], include_in_schema=False)
+async def metrics():
+    """Prometheus scrape. No PII in any label; reachable only on the internal network in
+    production (network policy), like /health."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health", tags=["ops"])
@@ -689,4 +803,5 @@ async def health():
 async def me(p: Annotated[Principal, Depends(principal)]):
     from rec.api.auth import PERMISSIONS
     return {"subject": p.subject, "role": p.role, "kind": p.kind,
-            "permissions": sorted(a for a in PERMISSIONS if p.can(a))}
+            "permissions": sorted(a for a in PERMISSIONS if p.can(a)),
+            "csrfToken": p.csrf}

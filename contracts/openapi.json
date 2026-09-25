@@ -133,6 +133,19 @@
         "title": "DatasetConfig",
         "type": "object"
       },
+      "DevLogin": {
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "DevLogin",
+        "type": "object"
+      },
       "EligibilityProbe": {
         "properties": {
           "customerId": {
@@ -149,6 +162,53 @@
           "customerId"
         ],
         "title": "EligibilityProbe",
+        "type": "object"
+      },
+      "ErasureDecision": {
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "approve"
+        ],
+        "title": "ErasureDecision",
+        "type": "object"
+      },
+      "ErasureRequest": {
+        "properties": {
+          "customerId": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Customerid",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "customerId",
+          "reason"
+        ],
+        "title": "ErasureRequest",
         "type": "object"
       },
       "FailureInjection": {
@@ -461,6 +521,140 @@
           "version"
         ],
         "title": "PromotionPatch",
+        "type": "object"
+      },
+      "Recommendation": {
+        "properties": {
+          "categoryCode": {
+            "title": "Categorycode",
+            "type": "string"
+          },
+          "merchantId": {
+            "title": "Merchantid",
+            "type": "string"
+          },
+          "merchantName": {
+            "title": "Merchantname",
+            "type": "string"
+          },
+          "promotion": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reasonCodes": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasoncodes",
+            "type": "array"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "scoreType": {
+            "const": "RELATIVE_RELEVANCE",
+            "default": "RELATIVE_RELEVANCE",
+            "title": "Scoretype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "merchantId",
+          "merchantName",
+          "categoryCode",
+          "rank",
+          "score"
+        ],
+        "title": "Recommendation",
+        "type": "object"
+      },
+      "RecommendationResponse": {
+        "description": "SERV-002.",
+        "properties": {
+          "customerId": {
+            "title": "Customerid",
+            "type": "string"
+          },
+          "featureAsOf": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Featureasof"
+          },
+          "featureSchemaVersion": {
+            "default": "1.0.0",
+            "title": "Featureschemaversion",
+            "type": "string"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "modelVersion": {
+            "title": "Modelversion",
+            "type": "string"
+          },
+          "rankingConfigVersion": {
+            "default": "baseline-1.0.0",
+            "title": "Rankingconfigversion",
+            "type": "string"
+          },
+          "recommendations": {
+            "items": {
+              "$ref": "#/components/schemas/Recommendation"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "CACHE",
+              "LIVE",
+              "FALLBACK"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requestId",
+          "customerId",
+          "generatedAt",
+          "modelVersion",
+          "source",
+          "recommendations"
+        ],
+        "title": "RecommendationResponse",
         "type": "object"
       },
       "SimulationRequest": {
@@ -908,6 +1102,136 @@
         ]
       }
     },
+    "/admin/v1/erasure-requests": {
+      "get": {
+        "operationId": "list_erasures_admin_v1_erasure_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Erasures",
+        "tags": [
+          "privacy"
+        ]
+      },
+      "post": {
+        "operationId": "request_erasure_admin_v1_erasure_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Erasure",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
+    "/admin/v1/erasure-requests/{request_id}/decision": {
+      "post": {
+        "description": "Approval executes immediately: Postgres rows go in one transaction with the\ntombstone, then Redis state and cache. Audit rows are kept (immutable, and they hold\nonly the pseudonymous id) \u2014 see docs/runbooks.md.",
+        "operationId": "decide_erasure_admin_v1_erasure_requests__request_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Erasure",
+        "tags": [
+          "privacy"
+        ]
+      }
+    },
     "/admin/v1/events": {
       "get": {
         "description": "SSE job/operation status. The dashboard falls back to polling on disconnect.",
@@ -1138,6 +1462,26 @@
           }
         },
         "summary": "List Models",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/models/guardrail/status": {
+      "get": {
+        "description": "Live-arm health the automatic rollback acts on (SDD 17.2 step 14).",
+        "operationId": "guardrail_status_admin_v1_models_guardrail_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Guardrail Status",
         "tags": [
           "models"
         ]
@@ -2049,7 +2393,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2146,6 +2492,180 @@
         "summary": "Record Interaction",
         "tags": [
           "feedback"
+        ]
+      }
+    },
+    "/bff/callback": {
+      "get": {
+        "operationId": "callback_bff_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Callback",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/bff/config": {
+      "get": {
+        "operationId": "config_bff_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Config",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/bff/dev-login": {
+      "post": {
+        "description": "Local/test only: trade a demo token for a real session, so the browser path is\nidentical to SSO from here on.",
+        "operationId": "dev_login_bff_dev_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevLogin"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dev Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/bff/login": {
+      "get": {
+        "operationId": "login_bff_login_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "next",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/bff/logout": {
+      "post": {
+        "operationId": "logout_bff_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
         ]
       }
     },

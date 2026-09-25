@@ -1,15 +1,35 @@
 """SEC-001 — role enforcement happens here, on the backend (AC-006, UI gating is cosmetic).
 
-Demo token scheme. Fase 5 replaces it with the BFF session cookie + OIDC upstream;
-the Principal contract and the require() guards stay as-is.
+Two ways in:
+- Browser: the BFF session cookie (SDD 13.4). Opaque id, state in Redis, HttpOnly, and
+  every mutation must echo the session's CSRF token in `X-CSRF-Token`.
+- Machines/customers: `Authorization: Bearer`. Static admin tokens are honoured only in
+  DEV_ENVIRONMENTS; customer tokens are the mobile-app stand-in.
 """
 from __future__ import annotations
 
+import hmac
+import json
+import secrets
+import time
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, status
 
-from rec.settings import settings
+from rec.settings import DEV_ENVIRONMENTS, settings
+from rec.store import pg
+from rec.store.redis_store import _client
+
+SESSION_PREFIX = "sess:"
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_redis = None
+
+
+def redis():
+    global _redis
+    if _redis is None:
+        _redis = _client()
+    return _redis
 
 ROLES = ["Viewer", "Analyst", "Marketing Operator", "ML Engineer", "Platform Operator",
          "Approver", "Auditor"]
@@ -37,6 +57,10 @@ PERMISSIONS: dict[str, set[str]] = {
     "model:promote": {"Approver"},
     "model:rollback": {"Approver", "Platform Operator"},
     "audit:read": {"Auditor", "Platform Operator"},
+    # AC-009 maker-checker: an operator files, an approver (a different person) executes.
+    "erasure:request": {"Platform Operator"},
+    "erasure:approve": {"Approver"},
+    "erasure:read": {"Platform Operator", "Approver", "Auditor"},
 }
 
 
@@ -45,12 +69,16 @@ class Principal:
     subject: str
     role: str
     kind: str  # "admin" | "customer"
+    session_id: str | None = None
+    csrf: str | None = None
 
     def can(self, action: str) -> bool:
         return self.kind == "admin" and self.role in PERMISSIONS.get(action, set())
 
 
 def _admin_table() -> dict[str, tuple[str, str]]:
+    if settings.environment not in DEV_ENVIRONMENTS:
+        return {}
     table = {}
     for entry in settings.admin_tokens.split(","):
         if not entry.strip():
@@ -60,21 +88,56 @@ def _admin_table() -> dict[str, tuple[str, str]]:
     return table
 
 
-def _bearer(request: Request) -> str:
-    header = request.headers.get("authorization", "")
-    if header.lower().startswith("bearer "):
-        return header[7:].strip()
-    # EventSource cannot set headers, so SSE (and only SSE) accepts the token as a
-    # query param. It disappears with the BFF session cookie in Fase 5.
-    if request.url.path.endswith("/admin/v1/events"):
-        token = request.query_params.get("access_token")
-        if token:
-            return token.strip()
-    raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+# ------------------------------------------------------------------ sessions
+
+
+async def create_session(subject: str, role: str, upstream: dict | None = None) -> tuple[str, str]:
+    """Returns (session_id, csrf). Upstream OIDC tokens stay here, never in the browser."""
+    sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+    data = {"subject": subject, "role": role, "csrf": csrf, "createdAt": time.time(),
+            "upstream": upstream or {}}
+    await redis().set(SESSION_PREFIX + sid, json.dumps(data), ex=settings.session_idle_seconds)
+    return sid, csrf
+
+
+async def load_session(sid: str) -> dict | None:
+    key = SESSION_PREFIX + sid
+    raw = await redis().get(key)
+    if not raw:
+        return None
+    data = json.loads(raw)
+    if time.time() - data["createdAt"] > settings.session_absolute_seconds:
+        await redis().delete(key)
+        return None
+    await redis().expire(key, settings.session_idle_seconds)  # sliding idle timeout
+    return data
+
+
+async def drop_session(sid: str) -> dict | None:
+    key = SESSION_PREFIX + sid
+    raw = await redis().getdel(key)
+    return json.loads(raw) if raw else None
+
+
+async def _from_session(request: Request, sid: str) -> Principal:
+    data = await load_session(sid)
+    if data is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "session expired")
+    if request.method not in SAFE_METHODS:
+        sent = request.headers.get("x-csrf-token", "")
+        if not hmac.compare_digest(sent, data["csrf"]):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "missing or invalid CSRF token")
+    return Principal(data["subject"], data["role"], "admin", sid, data["csrf"])
 
 
 async def principal(request: Request) -> Principal:
-    token = _bearer(request)
+    header = request.headers.get("authorization", "")
+    if not header.lower().startswith("bearer "):
+        sid = request.cookies.get(settings.session_cookie)
+        if sid:
+            return await _from_session(request, sid)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "not signed in")
+    token = header[7:].strip()
     admins = _admin_table()
     if token in admins:
         subject, role = admins[token]
@@ -85,12 +148,17 @@ async def principal(request: Request) -> Principal:
 
 
 def require(action: str):
-    async def guard(p: Principal = Depends(principal)) -> Principal:
+    async def guard(request: Request, p: Principal = Depends(principal)) -> Principal:
         if not p.can(action):
+            if p.kind == "admin":  # an admin probing beyond their role is worth a record
+                await pg.audit(p.subject, p.role, "authz.denied", request.url.path,
+                               outcome="DENIED", changes={"action": action},
+                               trace_id=getattr(request.state, "trace_id", None))
             raise HTTPException(status.HTTP_403_FORBIDDEN,
                                 f"role {p.role} may not {action}")
         return p
 
+    guard.action = action  # read by the RBAC matrix test
     return guard
 
 

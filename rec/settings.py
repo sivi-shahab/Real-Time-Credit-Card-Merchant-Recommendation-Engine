@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # SEC-002: secrets may come from files mounted by a secret manager / docker secrets
+    # (/run/secrets/<field_name>) instead of plain env vars.
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore",
+        secrets_dir="/run/secrets" if Path("/run/secrets").is_dir() else None)
 
     kafka_bootstrap: str = "localhost:9092"
     redis_url: str = "redis://localhost:6379/0"
@@ -34,12 +40,36 @@ class Settings(BaseSettings):
     # Batches are small (<=200 rows); a wide thread pool costs more to start than it saves.
     ranking_threads: int = 2
 
-    # Demo auth. Replace with the BFF session + OIDC upstream in Fase 5.
+    # Static bearer tokens: scripts and tests only. Ignored outside DEV_ENVIRONMENTS, where
+    # admins sign in through the BFF (OIDC) and machines need a real credential.
     admin_tokens: str = (
         "admin-token:admin:Platform Operator,analyst-token:analyst:Analyst,"
-        "ml-token:mlops:ML Engineer,approver-token:approver:Approver"
+        "ops-token:ops:Marketing Operator,auditor-token:auditor:Auditor,"
+        "ml-token:mlops:ML Engineer,approver-token:approver:Approver,"
+        "viewer-token:viewer:Viewer"
     )
     customer_token_prefix: str = "cust-"
+
+    # SDD 13.4 BFF. Browser auth is an opaque server-side session in an HttpOnly cookie.
+    session_cookie: str = "rec_session"
+    session_idle_seconds: int = 30 * 60
+    session_absolute_seconds: int = 8 * 60 * 60
+    cookie_secure: bool = True  # only .env for plain-http local turns this off
+    # OIDC (authorization code + PKCE). Empty issuer = SSO disabled.
+    oidc_discovery_url: str = ""  # back-channel URL of .well-known/openid-configuration
+    oidc_client_id: str = "rec-dashboard"
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = "http://localhost:5173/bff/callback"
+    oidc_roles_claim: str = "roles"
+
+    # Canary guardrail (SDD 17.2 step 14): automatic rollback when the live model misbehaves.
+    guardrail_interval_seconds: int = 30
+    guardrail_min_requests: int = 50
+    guardrail_max_degraded_rate: float = 0.05
+    guardrail_max_p95_ms: float = 500.0
+
+
+DEV_ENVIRONMENTS = {"local", "test", "ci"}
 
 
 settings = Settings()

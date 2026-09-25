@@ -1,33 +1,46 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { post } from '@/lib/api'
 import { useSession } from '@/stores/session'
 
-describe('session permissions gate the UI (SEC-001)', () => {
+const me = { subject: 'analyst', role: 'Analyst', kind: 'admin', csrfToken: 'csrf-1',
+             permissions: ['metrics:read', 'recommendation:preview'] }
+const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response
+
+describe('session (SDD 13.4, SEC-001)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     sessionStorage.clear()
+    localStorage.clear()
   })
 
-  it('reflects backend-issued permissions and drops the token on failure', async () => {
-    const me = { subject: 'analyst', role: 'Analyst', kind: 'admin',
-                 permissions: ['metrics:read', 'recommendation:preview'] }
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      { ok: true, status: 200, json: async () => me } as Response))
+  it('reflects backend permissions and stores no credential in the browser', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(ok({})).mockResolvedValueOnce(ok(me)))
     const s = useSession()
-    await s.login('analyst-token')
+    await s.devLogin('analyst-token')
     expect(s.can('recommendation:preview')).toBe(true)
     expect(s.can('audit:read')).toBe(false)
-    expect(sessionStorage.getItem('rec.token')).toBe('analyst-token')
+    expect(sessionStorage.length + localStorage.length).toBe(0)
+  })
 
+  it('sends the CSRF token on mutations and cookies on every request', async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(ok({})).mockResolvedValueOnce(ok(me))
+      .mockResolvedValue(ok({}))
+    vi.stubGlobal('fetch', fetch)
+    await useSession().devLogin('analyst-token')
+    await post('/admin/v1/recommendations/preview', {})
+    const [, init] = fetch.mock.calls.at(-1)!
+    expect(init.credentials).toBe('include')
+    expect(init.headers['x-csrf-token']).toBe('csrf-1')
+  })
+
+  it('surfaces a failed login and treats anonymous as permitting nothing', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false, status: 401, statusText: 'Unauthorized',
       json: async () => ({ code: 'UNAUTHENTICATED', message: 'invalid token' }),
     } as Response))
-    await expect(useSession().login('bad')).rejects.toThrow()
-    expect(sessionStorage.getItem('rec.token')).toBeNull()
-  })
-
-  it('treats an anonymous session as permitting nothing', () => {
-    expect(useSession().can('metrics:read')).toBe(false)
+    const s = useSession()
+    await expect(s.devLogin('bad')).rejects.toThrow('invalid token')
+    expect(s.can('metrics:read')).toBe(false)
   })
 })

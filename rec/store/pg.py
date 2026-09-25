@@ -13,11 +13,20 @@ from rec.settings import settings
 _pool: asyncpg.Pool | None = None
 
 
+class _Connection(asyncpg.Connection):
+    def get_reset_query(self) -> str:
+        """No session state is ever left behind (no SET, LISTEN, cursors; the migration
+        lock is released explicitly), so skip the reset round trip on every release.
+        Revisit if anything starts using session-level state."""
+        return ""
+
+
 async def pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         _pool = await asyncpg.create_pool(settings.postgres_dsn, min_size=2,
-                                         max_size=settings.pg_max_connections)
+                                         max_size=settings.pg_max_connections,
+                                         connection_class=_Connection)
         await _migrate(_pool)
     return _pool
 
@@ -97,6 +106,14 @@ async def active_promotions(now: datetime) -> list[Promotion]:
     return [_promotion(r) for r in rows]
 
 
+async def active_promotion_merchants(now: datetime) -> set[str]:
+    """AC-005 on the cache-hit path: only the ids are needed, not 100+ parsed models."""
+    p = await pool()
+    return {r["merchant_id"] for r in await p.fetch(
+        """SELECT DISTINCT merchant_id FROM promotions
+           WHERE status = 'ACTIVE' AND starts_at <= $1 AND ends_at >= $1""", now)}
+
+
 async def promotions(limit: int = 500, offset: int = 0) -> list[Promotion]:
     p = await pool()
     rows = await p.fetch("SELECT * FROM promotions ORDER BY promotion_id LIMIT $1 OFFSET $2",
@@ -122,30 +139,41 @@ async def customer_redemption_counts(customer_id: str) -> dict[str, int]:
 # ------------------------------------------------------------------ logs
 
 
-async def log_transaction(env: dict, outcome: str, reject_code: str | None = None,
-                          reject_detail: str | None = None) -> None:
-    """One INSERT per ingested event. This is the ingestion throughput ceiling
-    (~120 eps locally); reaching the 10k TPS NFR needs a batched COPY sink or an
-    async archive writer, which is Fase 5 load-hardening work, not Fase 1-3."""
+def transaction_row(env: dict, outcome: str, reject_code: str | None = None,
+                    reject_detail: str | None = None) -> tuple:
     payload = env.get("payload", {})
+    return (env.get("eventId"), payload.get("transactionId"), payload.get("customerId"),
+            payload.get("merchantId"), payload.get("transactionType"),
+            int(payload.get("amountMinor") or 0), _ts(payload.get("occurredAt")), outcome,
+            reject_code, reject_detail, env.get("correlationId"), json.dumps(env, default=str))
+
+
+async def log_transactions(rows: list[tuple]) -> None:
+    """One transaction per batch: the per-event INSERT (one fsync each) was the
+    ingestion ceiling at ~120 eps."""
+    if not rows:
+        return
     p = await pool()
-    await p.execute(
-        """INSERT INTO transaction_log (event_id, transaction_id, customer_id, merchant_id,
-             txn_type, amount_minor, occurred_at, outcome, reject_code, reject_detail,
-             correlation_id, envelope)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-           ON CONFLICT (event_id) DO NOTHING""",
-        env.get("eventId"), payload.get("transactionId"), payload.get("customerId"),
-        payload.get("merchantId"), payload.get("transactionType"),
-        int(payload.get("amountMinor") or 0), _ts(payload.get("occurredAt")), outcome,
-        reject_code, reject_detail, env.get("correlationId"), json.dumps(env, default=str),
-    )
+    async with p.acquire() as con, con.transaction():
+        await con.executemany(
+            """INSERT INTO transaction_log (event_id, transaction_id, customer_id, merchant_id,
+                 txn_type, amount_minor, occurred_at, outcome, reject_code, reject_detail,
+                 correlation_id, envelope)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+               ON CONFLICT (event_id) DO NOTHING""", rows)
 
 
 def _ts(value):
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+
+async def erased_customers() -> frozenset[str]:
+    """AC-009 tombstones — the source of truth; Redis holds a copy for the hot path."""
+    p = await pool()
+    return frozenset(r["customer_id"] for r in await p.fetch(
+        "SELECT customer_id FROM erased_customers"))
 
 
 async def audit(actor: str, actor_role: str, action: str, resource: str,

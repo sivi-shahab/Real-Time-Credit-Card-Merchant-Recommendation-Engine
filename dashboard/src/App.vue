@@ -10,8 +10,8 @@ const session = useSession()
 const router = useRouter()
 onMounted(() => session.restore())
 
-function logout() {
-  session.logout()
+async function logout() {
+  await session.logout()
   router.push('/login')
 }
 </script>

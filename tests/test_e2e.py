@@ -39,7 +39,8 @@ async def dataset(tmp_path_factory):
     manifest = await __import__("asyncio").to_thread(generate, cfg, out)
     await pg.pool()
     conn = await pg.pool()
-    await conn.execute("TRUNCATE transaction_log, impressions, interactions, audit_events")
+    await conn.execute("TRUNCATE transaction_log, impressions, interactions, audit_events, "
+                       "erasure_requests, erased_customers")
     await store.r.flushdb()
     await jobs.load_master_data(out)
     return out, manifest
@@ -539,3 +540,184 @@ async def test_model_endpoints_are_audited(client, replayed, baseline_deployment
     rows = (await client.get("/admin/v1/audit-events", headers=ADMIN)).json()["items"]
     entry = next(r for r in rows if r["action"] == "model.promote")
     assert entry["actor"] == "approver" and "m-audited" in entry["resource"]
+
+
+# ----------------------------------------------------------------- Fase 5: hardening
+
+
+async def test_guardrail_rolls_back_a_failing_live_model(client, replayed, baseline_deployment,
+                                                         monkeypatch):
+    """SDD 17.2 step 14: a promoted model that keeps failing is rolled back without a human."""
+    from rec.api import service
+    from rec.ml import client as ranking_client
+    from rec.ml import guardrail, registry
+
+    monkeypatch.setattr(settings, "guardrail_min_requests", 5)
+    conn = await pg.pool()
+    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
+    await _register_fake_model("m-guarded")
+    await registry.promote("m-guarded", mode="FULL", canary_percent=100, actor="test")
+
+    async def healthy(_version, candidates):
+        return [0.0] * len(candidates), 1.0
+
+    monkeypatch.setattr(ranking_client, "score", healthy)
+    for _ in range(5):
+        await service.recommend(store, cid, use_cache=False)
+    assert await guardrail.check(store) is None, "a healthy model must stay live"
+
+    async def boom(_version, _candidates):
+        raise ranking_client.RankingUnavailable("RANKING_TIMEOUT")
+
+    monkeypatch.setattr(ranking_client, "score", boom)
+    for _ in range(5):
+        await service.recommend(store, cid, use_cache=False)
+    await store.r.delete(guardrail.LOCK_KEY)
+    rolled = await guardrail.check(store)
+    assert rolled is not None and rolled["mode"] == "BASELINE"
+    rows = (await client.get("/admin/v1/audit-events", headers=ADMIN)).json()["items"]
+    entry = next(r for r in rows if r["actor"] == "system:guardrail")
+    assert entry["outcome"] == "AUTOMATIC" and entry["changes"]["breaches"]
+
+
+async def test_redis_loss_degrades_to_popular_not_to_an_error(replayed):
+    """SDD 16 resilience: online store down -> SERV-003 popular list, still HTTP 200."""
+    import redis.asyncio as aioredis
+
+    from rec.api import service
+    from rec.store.redis_store import OnlineStore
+
+    dead = OnlineStore(aioredis.from_url("redis://localhost:1/0", socket_connect_timeout=0.2))
+    conn = await pg.pool()
+    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
+    response, debug = await service.recommend_safe(dead, cid)
+    assert response.source == "FALLBACK" and response.recommendations
+    assert debug["fallbackReason"]
+    await dead.close()
+
+
+async def test_audit_log_cannot_be_rewritten(replayed):
+    conn = await pg.pool()
+    await pg.audit("t", "Auditor", "test.append", "x")
+    with pytest.raises(Exception, match="append-only"):
+        await conn.execute("UPDATE audit_events SET actor='someone-else'")
+    with pytest.raises(Exception, match="append-only"):
+        await conn.execute("DELETE FROM audit_events")
+
+
+async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, replayed):
+    """AC-009: approved erasure removes the customer everywhere; replaying the archive
+    afterwards brings nothing back."""
+    out, *_ = replayed
+    conn = await pg.pool()
+    cid = await conn.fetchval(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 1""")
+    assert await store.r.exists(f"state:{cid}")
+
+    filed = await client.post("/admin/v1/erasure-requests",
+                              json={"customerId": cid, "reason": "PDP deletion request"},
+                              headers=ADMIN)
+    assert filed.status_code == 201
+    rid = filed.json()["requestId"]
+    # maker-checker: the operator cannot approve; the approver can
+    assert (await client.post(f"/admin/v1/erasure-requests/{rid}/decision",
+                              json={"approve": True}, headers=ADMIN)).status_code == 403
+    done = await client.post(f"/admin/v1/erasure-requests/{rid}/decision",
+                             json={"approve": True}, headers=APPROVER)
+    assert done.status_code == 200 and done.json()["deleted"]["transaction_log"] > 0
+
+    # replay the whole archive, as after a disaster or a reprocessing run
+    processor = FeatureProcessor(store, producer=None)
+    outcomes = set()
+    for line in (out / "replay.jsonl").read_text().splitlines():
+        raw = json.loads(line)
+        if raw.get("payload", {}).get("customerId") == cid:
+            processor_outcome = await processor.handle(raw, now=REF + timedelta(hours=2))
+            outcomes.add(processor_outcome)
+    assert outcomes == {"ERASED_CUSTOMER"}
+    assert not await store.r.exists(f"state:{cid}")
+    assert await conn.fetchval("SELECT count(*) FROM transaction_log WHERE customer_id=$1",
+                               cid) == 0
+    # master-data reload does not resurrect the profile either
+    await jobs.load_master_data(out)
+    assert await pg.customer(cid) is None
+    r = await client.get(f"/api/v1/customer/{cid}/recommendations",
+                         headers={"Authorization": f"Bearer cust-{cid}"})
+    assert r.status_code == 404
+
+
+async def test_redis_state_rebuilds_exactly_from_postgres(replayed):
+    """SDD 16 recovery: lose Redis entirely, rebuild from the log, get identical features."""
+    import subprocess
+    import sys
+
+    conn = await pg.pool()
+    ids = [r["customer_id"] for r in await conn.fetch(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 20""")]
+    as_of = REF + timedelta(hours=3)
+    before = {cid: await store.features(cid, as_of) for cid in ids}
+    erased = await pg.erased_customers()
+
+    done = await asyncio.to_thread(
+        subprocess.run, [sys.executable, "scripts/rebuild_state.py", "--flush",
+                          "--now", (REF + timedelta(hours=1)).isoformat()],
+        capture_output=True, text=True, timeout=600)
+    assert done.returncode == 0, done.stderr[-2000:]
+
+    after = {cid: await store.features(cid, as_of) for cid in ids}
+    for cid in ids:
+        for key in ("transactionCount90d", "netSpend90d", "categoryInterest"):
+            assert before[cid][key] == after[cid][key], (cid, key)
+    for cid in erased:
+        assert not await store.r.exists(f"state:{cid}"), "rebuild resurrected an erased customer"
+
+
+async def test_simulator_never_skips_an_event_when_the_broker_fails(client, dataset,
+                                                                    monkeypatch):
+    """SIM-002 under broker loss: retry, then FAIL with the checkpoint on the unsent
+    event; resume continues from there, so nothing is lost."""
+    from rec.simulator import runner
+
+    sent: list[bytes] = []
+    state = {"down": True}
+
+    class FlakyProducer:
+        def __init__(self, **_kw):
+            pass
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            pass
+
+        async def send_and_wait(self, _topic, value, key=None):
+            if state["down"] and len(sent) == 5:
+                raise ConnectionError("broker down")
+            sent.append(value)
+
+    monkeypatch.setattr(runner, "AIOKafkaProducer", FlakyProducer)
+    monkeypatch.setattr(runner, "SEND_ATTEMPTS", 2)
+    run = (await client.post("/admin/v1/simulations", headers=ADMIN,
+                             json={"datasetId": "test-dataset", "targetTps": 5000})).json()
+    rid = run["run_id"]
+    await client.post(f"/admin/v1/simulations/{rid}/start", headers=ADMIN)
+    for _ in range(100):
+        status_ = (await client.get(f"/admin/v1/simulations/{rid}", headers=ADMIN)).json()
+        if status_["status"] == "FAILED":
+            break
+        await asyncio.sleep(0.1)
+    assert status_["status"] == "FAILED" and status_["offset_pos"] == 5
+
+    state["down"] = False
+    await client.post(f"/admin/v1/simulations/{rid}/resume", headers=ADMIN)
+    for _ in range(300):
+        status_ = (await client.get(f"/admin/v1/simulations/{rid}", headers=ADMIN)).json()
+        if status_["status"] == "COMPLETED":
+            break
+        await asyncio.sleep(0.1)
+    assert status_["status"] == "COMPLETED"
+    replay = (dataset[0] / "replay.jsonl").read_text().splitlines()
+    assert [v.decode().rstrip("\n") for v in sent] == replay, "every event once, in order"

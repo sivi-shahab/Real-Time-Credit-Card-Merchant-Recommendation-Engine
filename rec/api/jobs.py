@@ -73,6 +73,7 @@ async def load_master_data(out_dir: Path) -> dict[str, int]:
     """Upsert customers/merchants/promotions so serving has a catalog."""
     p = await pg.pool()
     customers = _read(out_dir, "customers")
+    customers = customers[~customers["customerId"].isin(await pg.erased_customers())]
     merchants = _read(out_dir, "merchants")
     promotions = _read(out_dir, "promotions")
 

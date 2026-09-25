@@ -50,6 +50,7 @@ async def _run(job_id: str, dataset_id: str, params: dict) -> None:
             test_fraction=float(params.get("testFraction", 0.25)),
             mlflow_tracking_uri=settings.mlflow_tracking_uri,
             experiment=settings.mlflow_experiment,
+            exclude_customers=await pg.erased_customers(),
         )
         payload = result.to_dict()
         await registry.record_model(payload, dataset_id=dataset_id, job_id=job_id)

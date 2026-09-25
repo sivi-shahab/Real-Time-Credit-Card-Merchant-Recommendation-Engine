@@ -1,0 +1,4 @@
+{"requests": 1493, "rps": 49.8, "concurrency": 1, "statuses": {"200": 1493}, "sources": {"LIVE": 294, "CACHE": 1199}, "errorRate": 0.0, "latencyMs": {"p50": 11.06, "p95": 55.7, "p99": 91.94, "mean": 20.05}, "mode": "api", "at": "2026-09-25T17:14:15.883969+00:00"}
+{"requests": 4850, "rps": 161.7, "concurrency": 8, "statuses": {"200": 4850}, "sources": {"CACHE": 4844, "LIVE": 6}, "errorRate": 0.0, "latencyMs": {"p50": 46.22, "p95": 71.85, "p99": 108.17, "mean": 49.34}, "mode": "api", "at": "2026-09-25T17:14:45.278815+00:00"}
+{"requests": 2860, "rps": 95.3, "concurrency": 32, "statuses": {"200": 2860}, "sources": {"CACHE": 2860}, "errorRate": 0.0, "latencyMs": {"p50": 222.52, "p95": 1027.85, "p99": 1512.83, "mean": 336.22}, "mode": "api", "at": "2026-09-25T17:15:14.932113+00:00"}
+{"events": 3202, "seconds": 15.42, "eventsPerSecond": 207.7, "concurrency": 32, "mode": "ingest", "at": "2026-09-25T17:15:43.066391+00:00"}

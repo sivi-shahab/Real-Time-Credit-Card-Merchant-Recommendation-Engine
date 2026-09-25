@@ -42,15 +42,14 @@ for _ in $(seq 1 180); do
   sleep 3
 done
 
-say "wait for the feature engine to drain"
-PREV=-1
+say "wait for the feature engine to drain (consumer lag 0)"
 for _ in $(seq 1 120); do
-  CUR=$(curl -fsS "$API/admin/v1/metrics/overview" -H "$ADMIN" \
-    | python3 -c 'import sys,json;print(json.load(sys.stdin)["ingestion"]["totalEvents"])')
-  echo "consumed total=$CUR"
-  [ "$CUR" = "$PREV" ] && break
-  PREV=$CUR
-  sleep 5
+  LAG=$(docker compose exec -T kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+        --bootstrap-server localhost:9092 --describe --group feature-engine 2>/dev/null \
+        | awk '$6 ~ /^[0-9]+$/ {s+=$6} END {print s+0}')
+  echo "lag=$LAG"
+  [ "$LAG" = 0 ] && break
+  sleep 3
 done
 curl -fsS "$API/admin/v1/metrics/overview" -H "$ADMIN" | python3 -m json.tool
 

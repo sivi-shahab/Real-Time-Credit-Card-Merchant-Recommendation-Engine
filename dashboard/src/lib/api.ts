@@ -2,9 +2,9 @@
  * API client. Errors surface the backend's {code,message,traceId} shape so every
  * view can render a real error state instead of a blank panel.
  *
- * NOTE (SDD 13.4): production must move to the BFF session cookie + CSRF token.
- * This bearer scheme is the Fase 1-3 stand-in; it is the one known deviation and
- * is tracked as Fase 5 work in README.md.
+ * Auth (SDD 13.4): the BFF session lives in an HttpOnly cookie the browser sends on its
+ * own; JS never sees a credential. Mutations echo the session's CSRF token, which is
+ * held in memory only (it is not a credential on its own).
  */
 export class ApiError extends Error {
   constructor(
@@ -22,16 +22,19 @@ export class ApiError extends Error {
 
 const BASE = import.meta.env.VITE_API_BASE ?? ''
 
-export function token(): string {
-  return sessionStorage.getItem('rec.token') ?? ''
-}
+let csrf = ''
+export function setCsrf(value: string) { csrf = value }
+
+const SAFE = new Set(['GET', 'HEAD', 'OPTIONS'])
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method ?? 'GET').toUpperCase()
   const res = await fetch(`${BASE}${path}`, {
     ...init,
+    credentials: 'include',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${token()}`,
+      ...(SAFE.has(method) ? {} : { 'x-csrf-token': csrf }),
       ...(init.headers ?? {}),
     },
   })
@@ -57,9 +60,7 @@ export function subscribe(onEvent: (e: unknown) => void, onState: (up: boolean) 
   let es: EventSource | null = null
   const open = () => {
     if (closed) return
-    // EventSource cannot set headers; the token rides as a query param here and
-    // moves to the session cookie with the BFF.
-    es = new EventSource(`${BASE}/admin/v1/events?access_token=${encodeURIComponent(token())}`)
+    es = new EventSource(`${BASE}/admin/v1/events`, { withCredentials: true })
     es.onopen = () => { attempt = 0; onState(true) }
     es.onmessage = (ev) => { try { onEvent(JSON.parse(ev.data)) } catch { /* keepalive */ } }
     es.onerror = () => {

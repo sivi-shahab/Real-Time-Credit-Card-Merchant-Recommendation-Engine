@@ -22,8 +22,9 @@ TRANSITIONS = {
     "PAUSED": {"RUNNING", "STOPPED"},
     "COMPLETED": set(),
     "STOPPED": set(),
-    "FAILED": set(),
+    "FAILED": {"RUNNING"},  # resume from the checkpoint once the broker is back
 }
+SEND_ATTEMPTS = 5
 COMMAND_TARGET = {"start": "RUNNING", "pause": "PAUSED", "resume": "RUNNING", "stop": "STOPPED"}
 
 
@@ -103,13 +104,13 @@ class SimulationManager:
         path = self._dataset_path(run["dataset_id"])
         producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap,
                                     enable_idempotence=True, acks="all")
-        await producer.start()
         p = await pg.pool()
         sent, failed = run["sent_count"], run["failed_count"]
         offset = run["offset_pos"]
         interval = 1.0 / max(1, run["target_tps"] * float(run["speed_multiplier"]))
         window_start, window_sent = time.perf_counter(), 0
         try:
+            await producer.start()
             with path.open() as fh:
                 for index, line in enumerate(fh):
                     if index < offset:  # SIM-002: resume from checkpoint
@@ -121,13 +122,20 @@ class SimulationManager:
                     if cmd == "stop":
                         return
                     envelope = json.loads(line)
-                    try:
-                        await producer.send_and_wait(
-                            settings.topic_transactions, line.encode(),
-                            key=envelope["payload"]["customerId"].encode())
-                        sent += 1
-                    except Exception:
-                        failed += 1
+                    # SIM-002: never skip an event. Retry with backoff; if the broker
+                    # stays down, fail with the checkpoint still on this event.
+                    for attempt in range(SEND_ATTEMPTS):
+                        try:
+                            await producer.send_and_wait(
+                                settings.topic_transactions, line.encode(),
+                                key=envelope["payload"]["customerId"].encode())
+                            sent += 1
+                            break
+                        except Exception:
+                            failed += 1
+                            if attempt == SEND_ATTEMPTS - 1:
+                                raise
+                            await asyncio.sleep(min(2 ** attempt, 10))
                     offset = index + 1
                     window_sent += 1
                     if window_sent >= 200:

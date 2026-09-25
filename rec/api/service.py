@@ -29,8 +29,9 @@ from rec.core.ranking import (
     to_recommendations,
 )
 from rec.ml import client as ranking_client
-from rec.ml import registry
+from rec.ml import guardrail, registry
 from rec.ml.vectorize import vectorize
+from rec.obs import RANKING_DEGRADED, RECOMMENDATIONS, redact
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
 
@@ -162,7 +163,7 @@ async def recommend(
         if cached:
             resp = RecommendationResponse.model_validate(cached)
             # AC-005: promos are re-validated on every serve, cache or not
-            valid_ids = {p.merchantId for p in await pg.active_promotions(now)}
+            valid_ids = await pg.active_promotion_merchants(now)
             for item in resp.recommendations:
                 if item.promotion and item.merchantId not in valid_ids:
                     item.promotion = None
@@ -228,6 +229,7 @@ async def recommend(
         if ranker == "MODEL" and candidates:
             meta_by_merchant = {m.merchantId: meta for _, m, meta in scored}
             vectors = _vectors(candidates, features, city_code=city, eligible=eligible, now=now)
+            t0 = time.perf_counter()
             try:
                 scores, inference_ms = await ranking_client.score(model_version, vectors)
                 scored = [
@@ -245,7 +247,11 @@ async def recommend(
                 debug["degradeReason"] = exc.reason
                 await store.incr_metric(f"ranking_degraded_{exc.reason}")
                 await store.incr_metric("ranking_degraded")
+                RANKING_DEGRADED.labels(exc.reason).inc()
                 log.warning("ranking unavailable (%s); serving baseline", exc.reason)
+            if not preview:
+                await guardrail.record(store.r, deployment, degraded=degraded is not None,
+                                       latency_ms=(time.perf_counter() - t0) * 1000)
 
         if explain:
             debug["scored"] = [
@@ -284,6 +290,7 @@ async def recommend(
         with stage("cacheWrite"):
             await store.put_cached(key, response.model_dump(mode="json"))
     await store.incr_metric("recommendation_served")
+    RECOMMENDATIONS.labels(response.source, response.modelVersion).inc()
     return response, debug
 
 
@@ -298,11 +305,20 @@ async def recommend_safe(store: OnlineStore, customer_id: str, **kwargs):
     except KeyError:
         raise
     except Exception as exc:  # dependency failure -> popular, still promo-validated
-        await store.incr_metric("recommendation_fallback")
+        log.warning("serving fallback to popular list: %s", type(exc).__name__)
+        RECOMMENDATIONS.labels("FALLBACK", registry.BASELINE_VERSION).inc()
+        try:  # the failed dependency may well be Redis itself
+            await store.incr_metric("recommendation_fallback")
+        except Exception:  # noqa: BLE001
+            pass
         kwargs.pop("explain", None)
         now = kwargs.get("now") or datetime.now(UTC)
+        try:
+            catalog = await pg.merchants()
+        except Exception:  # noqa: BLE001 - SERV-003 step 4: no safe candidates -> empty
+            catalog = []
         merchants = sorted(
-            [m for m in await pg.merchants() if m.status == "ACTIVE"],
+            [m for m in catalog if m.status == "ACTIVE"],
             key=lambda m: (-m.rating, m.merchantId),
         )[: kwargs.get("limit", DEFAULT_RESULTS)]
         items = [(m.rating / 5.0, m, {"reasonCodes": ["POPULAR_PICK", "FALLBACK"]})
@@ -313,5 +329,6 @@ async def recommend_safe(store: OnlineStore, customer_id: str, **kwargs):
                 featureAsOf=None, modelVersion=registry.BASELINE_VERSION, source="FALLBACK",
                 stale=True, recommendations=to_recommendations(items, {}),
             ),
-            {"fallbackReason": type(exc).__name__, "detail": str(exc)[:200]},
+            {"fallbackReason": type(exc).__name__ if catalog else "NO_SAFE_CANDIDATES",
+             "detail": redact(str(exc))[:200]},
         )

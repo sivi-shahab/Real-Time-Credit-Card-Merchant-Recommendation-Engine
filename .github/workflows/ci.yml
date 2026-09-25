@@ -33,6 +33,15 @@ jobs:
         run: |
           .venv/bin/python scripts/export_openapi.py
           git diff --exit-code contracts/openapi.json
+      # SDD 17.2 step 6-7: SAST, dependency scan, SBOM
+      - name: SAST (bandit, medium+)
+        run: uvx bandit -q -r rec -ll
+      - name: Dependency vulnerabilities
+        run: uvx pip-audit --path .venv/lib/python3.12/site-packages
+      - name: SBOM (CycloneDX)
+        run: uvx --from cyclonedx-bom cyclonedx-py environment .venv > sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: sbom.cdx.json }
 
   frontend:
     runs-on: ubuntu-latest
@@ -42,6 +51,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: npm, cache-dependency-path: dashboard/package-lock.json }
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npx vue-tsc --noEmit
       - run: npx vitest run
       - run: npm run build

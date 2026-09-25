@@ -51,7 +51,8 @@ const allowed: Record<string, string[]> = {
   CREATED: ['start', 'stop'],
   RUNNING: ['pause', 'stop'],
   PAUSED: ['resume', 'stop'],
-  COMPLETED: [], STOPPED: [], FAILED: [],
+  FAILED: ['resume'],  // resumes from the checkpoint (SIM-002)
+  COMPLETED: [], STOPPED: [],
 }
 const label: Record<string, string> = {
   start: 'Mulai', pause: 'Jeda', resume: 'Lanjut', stop: 'Hentikan',

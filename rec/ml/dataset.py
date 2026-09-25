@@ -46,16 +46,22 @@ def build(
     as_of: datetime | None = None,
     observation_window: timedelta = OBSERVATION_WINDOW,
     attribution_window: timedelta = ATTRIBUTION_WINDOW,
+    exclude_customers: frozenset[str] = frozenset(),
 ) -> tuple[pd.DataFrame, dict]:
-    """Returns (rows, metadata). One row per exposed candidate, grouped by requestId."""
-    customers = {c["customerId"]: c for c in _read(dataset_dir, "customers")}
+    """Returns (rows, metadata). One row per exposed candidate, grouped by requestId.
+
+    `exclude_customers` are erased customers (AC-009): the files on disk predate the
+    erasure, so they are filtered on every read rather than trusted."""
+    customers = {c["customerId"]: c for c in _read(dataset_dir, "customers")
+                 if c["customerId"] not in exclude_customers}
     merchants = {m["merchantId"]: _merchant(m) for m in _read(dataset_dir, "merchants")}
     promotions = [_promotion(p) for p in _read(dataset_dir, "promotions")]
     promos_by_merchant: dict[str, list[Promotion]] = {}
     for promo in promotions:
         promos_by_merchant.setdefault(promo.merchantId, []).append(promo)
 
-    feedback = _read(dataset_dir, "feedback_events")
+    feedback = [e for e in _read(dataset_dir, "feedback_events")
+                if e["customerId"] not in exclude_customers]
     as_of = as_of or max(_ts(e["occurredAt"]) for e in feedback) + observation_window
     labels = label_from_events(feedback, as_of=as_of, observation_window=observation_window,
                               attribution_window=attribution_window)
@@ -79,6 +85,7 @@ def build(
         "attribution": policy_metadata(),
         # quotaUsed is current state, not history: promo quota exhaustion cannot be
         # reconstructed point-in-time from a static master table.
+        "excludedErasedCustomers": len(exclude_customers),
         "knownLimitations": ["promo quota evaluated from current quota_used, not as-of"],
     }
     return frame, metadata

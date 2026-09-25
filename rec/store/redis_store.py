@@ -18,6 +18,7 @@ STATE_PREFIX = "state:"
 DEDUP_PREFIX = "evt:"
 CACHE_PREFIX = "rec:"
 CACHE_INDEX_PREFIX = "recidx:"
+ERASED_KEY = "erased"  # copy of the erased_customers tombstones (AC-009)
 
 
 def _client() -> redis.Redis:
@@ -143,9 +144,31 @@ class OnlineStore:
                 deleted += await self.r.delete(key)
         return deleted
 
+    # ---------------------------------------------------------- erasure (AC-009)
+    async def is_erased(self, customer_id: str) -> bool:
+        return bool(await self.r.sismember(ERASED_KEY, customer_id))
+
+    async def load_tombstones(self, customer_ids) -> None:
+        """Re-hydrate after Redis loss; Postgres holds the durable list."""
+        if customer_ids:
+            await self.r.sadd(ERASED_KEY, *customer_ids)
+
+    async def erase_customer(self, customer_id: str) -> int:
+        await self.r.sadd(ERASED_KEY, customer_id)  # tombstone first: stops new writes
+        deleted = await self.r.delete(STATE_PREFIX + customer_id)
+        return deleted + await self.invalidate_customer(customer_id)
+
     # ---------------------------------------------------------- ops
     async def incr_metric(self, name: str, amount: int = 1) -> None:
         await self.r.hincrby("metrics", name, amount)
+
+    async def incr_metrics(self, counts: dict[str, int]) -> None:
+        if not counts:
+            return
+        async with self.r.pipeline(transaction=False) as pipe:
+            for name, amount in counts.items():
+                pipe.hincrby("metrics", name, amount)
+            await pipe.execute()
 
     async def metrics(self) -> dict[str, int]:
         return {k: int(v) for k, v in (await self.r.hgetall("metrics")).items()}

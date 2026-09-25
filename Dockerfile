@@ -6,5 +6,6 @@ COPY rec ./rec
 RUN uv pip install --system --no-cache .
 COPY db ./db
 COPY scripts ./scripts
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
 CMD ["uvicorn", "rec.api.app:app", "--host", "0.0.0.0", "--port", "8000"]

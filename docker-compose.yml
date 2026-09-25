@@ -62,6 +62,12 @@ services:
       MODEL_DIR: /app/data/models
       MLFLOW_TRACKING_URI: sqlite:////app/data/mlflow.db
       RANKING_SERVICE_URL: http://ranking:8100
+      # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
+      COOKIE_SECURE: "false"
+      OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
+      OIDC_CLIENT_ID: rec-dashboard
+      OIDC_CLIENT_SECRET: local-dev-secret-change-me
+      OIDC_REDIRECT_URI: http://localhost:5173/bff/callback
     ports: ["8000:8000"]
     volumes: ["./data:/app/data"]
     depends_on:
@@ -101,11 +107,30 @@ services:
       kafka: {condition: service_healthy}
 
   dashboard:
-    build: ./dashboard
-    environment:
-      VITE_API_BASE: http://localhost:8000
+    build: ./dashboard  # same-origin: nginx proxies /api, /admin, /bff to the API
     ports: ["5173:80"]
     depends_on: [api]
+
+  # SSO (SEC-001). Local realm with one demo user per role; production points the BFF at
+  # the corporate IdP instead. Browser sees localhost:8180, the BFF uses keycloak:8080.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: http://localhost:8180
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports: ["8180:8080"]
+    volumes: ["./deploy/keycloak:/opt/keycloak/data/import:ro"]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
 
 volumes:
   pgdata:

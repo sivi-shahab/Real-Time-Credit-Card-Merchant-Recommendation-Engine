@@ -11,6 +11,7 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://localhost:8000', changeOrigin: true },
       '/admin': { target: 'http://localhost:8000', changeOrigin: true },
+      '/bff': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
   test: { environment: 'jsdom', globals: true },
