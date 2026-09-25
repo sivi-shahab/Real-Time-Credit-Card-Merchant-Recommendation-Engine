@@ -59,12 +59,37 @@ services:
       POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
       DATA_DIR: /app/data
       ENVIRONMENT: local
+      MODEL_DIR: /app/data/models
+      MLFLOW_TRACKING_URI: sqlite:////app/data/mlflow.db
+      RANKING_SERVICE_URL: http://ranking:8100
     ports: ["8000:8000"]
     volumes: ["./data:/app/data"]
     depends_on:
       kafka: {condition: service_healthy}
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      ranking: {condition: service_started}
+
+  ranking:
+    build: .
+    command: uvicorn rec.ranking.service:app --host 0.0.0.0 --port 8100
+    environment: *backend_env
+    ports: ["8100:8100"]
+    volumes: ["./data:/app/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8100/health')\""]
+      interval: 10s
+      retries: 10
+
+  mlflow:
+    build: .
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////app/data/mlflow.db
+      --default-artifact-root /app/data/mlartifacts
+    environment: *backend_env
+    ports: ["5000:5000"]
+    volumes: ["./data:/app/data"]
 
   stream:
     build: .

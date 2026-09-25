@@ -19,6 +19,8 @@ const routes: RouteRecordRaw[] = [
   { path: '/explorer', component: () => import('@/views/RecommendationExplorerView.vue'),
     meta: { title: 'Recommendation Explorer', permission: 'recommendation:preview',
             icon: 'pi-search' } },
+  { path: '/models', component: () => import('@/views/ModelsView.vue'),
+    meta: { title: 'Model & Eksperimen', permission: 'model:read', icon: 'pi-sitemap' } },
   { path: '/merchants', component: () => import('@/views/MerchantsView.vue'),
     meta: { title: 'Merchant', permission: 'merchant:read', icon: 'pi-shop' } },
   { path: '/promotions', component: () => import('@/views/PromotionsView.vue'),

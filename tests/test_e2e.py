@@ -6,6 +6,7 @@ so the assertions cover the invariants, not the broker.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -326,3 +327,215 @@ async def test_openapi_is_31_and_documents_the_contract(client):
     paths = spec["paths"]
     assert "/api/v1/customer/{customer_id}/recommendations" in paths
     assert "/admin/v1/datasets" in paths and "/admin/v1/audit-events" in paths
+
+
+# ===================================================================== Fase 4: ML serving
+
+
+ML = {"Authorization": "Bearer ml-token"}
+APPROVER = {"Authorization": "Bearer approver-token"}
+
+
+async def _register_fake_model(model_version: str, *, approved: bool = True,
+                               schema: str = None) -> None:
+    """Insert a model row directly: these tests exercise the serving and promotion
+    decisions, not XGBoost. Training itself is covered in tests/test_ml_pipeline.py."""
+    from rec.ml import registry
+    from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
+
+    gates = [{"name": "ndcg_not_worse_than_baseline", "passed": approved, "detail": "test"}]
+    await registry.record_model({
+        "modelVersion": model_version,
+        "featureSchemaVersion": schema or VECTOR_SCHEMA_VERSION,
+        "trainerVersion": "test",
+        "artifacts": {"model": f"/tmp/{model_version}.json"},
+        "mlflowRunId": None,
+        "approved": approved,
+        "metrics": {"ndcg@10": 0.6}, "baselineMetrics": {"ndcg@10": 0.5},
+        "segmentMetrics": {}, "gates": gates, "datasetLineage": {},
+    }, dataset_id="test-dataset", job_id=None)
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def baseline_deployment():
+    """Every ML test starts and ends on the baseline so ordering cannot matter."""
+    conn = await pg.pool()
+    await conn.execute("""UPDATE model_deployment SET mode='BASELINE', model_version=NULL,
+                          previous_version=NULL, canary_percent=0 WHERE id=1""")
+    yield
+    await conn.execute("""UPDATE model_deployment SET mode='BASELINE', model_version=NULL,
+                          previous_version=NULL, canary_percent=0 WHERE id=1""")
+
+
+async def _no_warm(monkeypatch):
+    from rec.ml import client as ranking_client
+
+    async def warm(_version, **_kwargs):
+        return None
+
+    monkeypatch.setattr(ranking_client, "warm", warm)
+
+
+async def test_promotion_requires_approver_and_passing_gates(client, replayed,
+                                                             baseline_deployment, monkeypatch):
+    await _no_warm(monkeypatch)
+    await _register_fake_model("m-good")
+    await _register_fake_model("m-failed-gates", approved=False)
+
+    # separation of duties: the ML Engineer who trains does not promote
+    assert (await client.post("/admin/v1/models/m-good/promote", json={"mode": "FULL"},
+                              headers=ML)).status_code == 403
+    refused = await client.post("/admin/v1/models/m-failed-gates/promote",
+                                json={"mode": "FULL"}, headers=APPROVER)
+    assert refused.status_code == 409
+    assert "gates" in refused.json()["message"]
+    missing = await client.post("/admin/v1/models/does-not-exist/promote",
+                                json={"mode": "FULL"}, headers=APPROVER)
+    assert missing.status_code == 409
+
+    ok = await client.post("/admin/v1/models/m-good/promote",
+                           json={"mode": "FULL"}, headers=APPROVER)
+    assert ok.status_code == 200 and ok.json()["mode"] == "FULL"
+
+
+async def test_feature_schema_mismatch_blocks_promotion(client, replayed,
+                                                        baseline_deployment, monkeypatch):
+    await _no_warm(monkeypatch)
+    await _register_fake_model("m-old-schema", schema="0.9.0")
+    refused = await client.post("/admin/v1/models/m-old-schema/promote",
+                                json={"mode": "FULL"}, headers=APPROVER)
+    assert refused.status_code == 409
+    assert "feature schema" in refused.json()["message"]
+
+
+async def test_model_ranks_when_promoted_and_degrades_when_it_fails(client, replayed,
+                                                                   baseline_deployment,
+                                                                   monkeypatch):
+    from rec.api import service
+    from rec.ml import client as ranking_client
+    from rec.ml import registry
+
+    conn = await pg.pool()
+    cid = await conn.fetchval(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 1""")
+    await _register_fake_model("m-live")
+    await registry.promote("m-live", mode="FULL", canary_percent=100, actor="test")
+
+    # a model that simply reverses the baseline order proves the model output is used
+    async def reversed_scores(_version, candidates):
+        return [float(-i) for i in range(len(candidates))], 1.23
+
+    monkeypatch.setattr(ranking_client, "score", reversed_scores)
+    response, debug = await service.recommend(store, cid, use_cache=False, explain=True)
+    assert response.modelVersion == "m-live" and response.source == "LIVE"
+    assert debug["deployment"]["ranker"] == "MODEL"
+    assert debug["inferenceMs"] == 1.23
+    assert all(isinstance(item.reasonCodes, list) for item in response.recommendations)
+
+    async def boom(_version, _candidates):
+        raise ranking_client.RankingUnavailable("RANKING_TIMEOUT")
+
+    monkeypatch.setattr(ranking_client, "score", boom)
+    degraded, debug2 = await service.recommend(store, cid, use_cache=False, explain=True)
+    assert degraded.source == "FALLBACK"
+    assert degraded.modelVersion == registry.BASELINE_VERSION
+    assert debug2["degradeReason"] == "RANKING_TIMEOUT"
+    assert len(degraded.recommendations) > 0, "a ranking failure must not empty the response"
+
+
+async def test_shadow_mode_does_not_change_what_is_served(client, replayed,
+                                                          baseline_deployment, monkeypatch):
+    from rec.api import service
+    from rec.ml import client as ranking_client
+    from rec.ml import registry
+
+    conn = await pg.pool()
+    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
+    served_baseline, _ = await service.recommend(store, cid, use_cache=False)
+
+    await _register_fake_model("m-shadow")
+    await registry.promote("m-shadow", mode="SHADOW", canary_percent=0, actor="test")
+
+    async def reversed_scores(_version, candidates):
+        return [float(-i) for i in range(len(candidates))], 5.0
+
+    monkeypatch.setattr(ranking_client, "score", reversed_scores)
+    before = await conn.fetchval("SELECT count(*) FROM shadow_evaluations")
+    shadowed, debug = await service.recommend(store, cid, use_cache=False)
+    assert shadowed.modelVersion == registry.BASELINE_VERSION
+    assert [r.merchantId for r in shadowed.recommendations] == \
+           [r.merchantId for r in served_baseline.recommendations]
+    assert "shadow" in debug
+    await asyncio.sleep(0.8)  # fire-and-forget comparison
+    assert await conn.fetchval("SELECT count(*) FROM shadow_evaluations") > before
+    row = await conn.fetchrow(
+        "SELECT * FROM shadow_evaluations ORDER BY occurred_at DESC LIMIT 1")
+    assert row["model_version"] == "m-shadow" and row["served_source"] == "BASELINE"
+
+
+async def test_canary_routes_only_its_share_and_is_stable_per_customer(client, replayed,
+                                                                      baseline_deployment,
+                                                                      monkeypatch):
+    from rec.api import service
+    from rec.ml import client as ranking_client
+    from rec.ml import registry
+
+    async def scores(_version, candidates):
+        return [1.0] * len(candidates), 1.0
+
+    monkeypatch.setattr(ranking_client, "score", scores)
+    await _register_fake_model("m-canary")
+    await registry.promote("m-canary", mode="CANARY", canary_percent=50, actor="test")
+
+    conn = await pg.pool()
+    ids = [r["customer_id"] for r in await conn.fetch(
+        "SELECT customer_id FROM customers ORDER BY customer_id LIMIT 24")]
+    versions = {}
+    for cid in ids:
+        response, _ = await service.recommend(store, cid, use_cache=False)
+        versions[cid] = response.modelVersion
+    assert set(versions.values()) == {"m-canary", registry.BASELINE_VERSION}, versions
+    again, _ = await service.recommend(store, ids[0], use_cache=False)
+    assert again.modelVersion == versions[ids[0]], "a customer must not flip between rankers"
+
+
+async def test_cache_key_includes_the_model_version():
+    from rec.api.service import cache_key
+
+    assert cache_key("C1", "JKT", None, 10, "m-a") != cache_key("C1", "JKT", None, 10, "m-b")
+
+
+async def test_rollback_returns_to_previous_then_to_baseline(client, replayed,
+                                                             baseline_deployment, monkeypatch):
+    await _no_warm(monkeypatch)
+    await _register_fake_model("m-v1")
+    await _register_fake_model("m-v2")
+    await client.post("/admin/v1/models/m-v1/promote", json={"mode": "FULL"}, headers=APPROVER)
+    await client.post("/admin/v1/models/m-v2/promote", json={"mode": "FULL"}, headers=APPROVER)
+
+    first = await client.post("/admin/v1/models/m-v2/rollback", headers=APPROVER)
+    assert first.json()["model_version"] == "m-v1"
+    second = await client.post("/admin/v1/models/m-v1/rollback", headers=APPROVER)
+    assert second.json()["mode"] == "BASELINE" and second.json()["model_version"] is None
+    assert (await client.post("/admin/v1/models/m-v1/rollback",
+                              headers=ANALYST)).status_code == 403
+
+
+async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
+    assert (await client.post("/admin/v1/training-jobs",
+                              json={"datasetId": "test-dataset"},
+                              headers=ANALYST)).status_code == 403
+    missing = await client.post("/admin/v1/training-jobs",
+                                json={"datasetId": "no-such-dataset"}, headers=ML)
+    assert missing.status_code == 404
+
+
+async def test_model_endpoints_are_audited(client, replayed, baseline_deployment, monkeypatch):
+    await _no_warm(monkeypatch)
+    await _register_fake_model("m-audited")
+    await client.post("/admin/v1/models/m-audited/promote", json={"mode": "SHADOW"},
+                      headers=APPROVER)
+    rows = (await client.get("/admin/v1/audit-events", headers=ADMIN)).json()["items"]
+    entry = next(r for r in rows if r["action"] == "model.promote")
+    assert entry["actor"] == "approver" and "m-audited" in entry["resource"]

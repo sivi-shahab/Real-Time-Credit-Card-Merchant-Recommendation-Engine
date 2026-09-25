@@ -123,3 +123,61 @@ CREATE TABLE IF NOT EXISTS interactions (
   occurred_at    TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS interactions_impression ON interactions (impression_id);
+
+-- ===== Fase 4: model lifecycle =====
+CREATE TABLE IF NOT EXISTS training_jobs (
+  job_id      TEXT PRIMARY KEY,
+  dataset_id  TEXT NOT NULL,
+  status      TEXT NOT NULL,            -- QUEUED | RUNNING | COMPLETED | FAILED
+  params      JSONB NOT NULL DEFAULT '{}',
+  result      JSONB,
+  error       TEXT,
+  idempotency_key TEXT UNIQUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS models (
+  model_version   TEXT PRIMARY KEY,
+  dataset_id      TEXT NOT NULL,
+  job_id          TEXT REFERENCES training_jobs(job_id),
+  feature_schema_version TEXT NOT NULL,
+  trainer_version TEXT NOT NULL,
+  artifact_path   TEXT NOT NULL,
+  mlflow_run_id   TEXT,
+  approved        BOOLEAN NOT NULL DEFAULT FALSE,
+  metrics         JSONB NOT NULL DEFAULT '{}',
+  baseline_metrics JSONB NOT NULL DEFAULT '{}',
+  segment_metrics JSONB NOT NULL DEFAULT '{}',
+  gates           JSONB NOT NULL DEFAULT '[]',
+  lineage         JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Exactly one row: the live serving decision. ML-006 + SDD 17.2 compatibility matrix.
+CREATE TABLE IF NOT EXISTS model_deployment (
+  id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  mode            TEXT NOT NULL DEFAULT 'BASELINE'
+                  CHECK (mode IN ('BASELINE','SHADOW','CANARY','FULL')),
+  model_version   TEXT REFERENCES models(model_version),
+  previous_version TEXT REFERENCES models(model_version),
+  canary_percent  INT NOT NULL DEFAULT 0 CHECK (canary_percent BETWEEN 0 AND 100),
+  promoted_by     TEXT,
+  promoted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  note            TEXT
+);
+INSERT INTO model_deployment (id, mode) VALUES (1, 'BASELINE')
+  ON CONFLICT (id) DO NOTHING;
+
+-- Shadow comparisons: what the model would have ranked vs what was served.
+CREATE TABLE IF NOT EXISTS shadow_evaluations (
+  request_id     TEXT PRIMARY KEY,
+  customer_id    TEXT NOT NULL,
+  model_version  TEXT NOT NULL,
+  served_source  TEXT NOT NULL,
+  rank_agreement NUMERIC(5,4),
+  top1_agreement BOOLEAN,
+  model_latency_ms NUMERIC(8,2),
+  occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS shadow_time ON shadow_evaluations (occurred_at DESC);

@@ -30,6 +30,12 @@ PERMISSIONS: dict[str, set[str]] = {
     "promotion:approve": {"Approver"},
     "metrics:read": {"Viewer", "Analyst", "Marketing Operator", "ML Engineer",
                      "Platform Operator", "Auditor"},
+    "training:run": {"ML Engineer"},
+    "model:read": {"Viewer", "Analyst", "ML Engineer", "Platform Operator", "Approver",
+                   "Auditor"},
+    # SEC-001: separation of duties — the engineer who trains a model does not promote it.
+    "model:promote": {"Approver"},
+    "model:rollback": {"Approver", "Platform Operator"},
     "audit:read": {"Auditor", "Platform Operator"},
 }
 

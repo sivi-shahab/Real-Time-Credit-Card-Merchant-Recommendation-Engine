@@ -384,6 +384,36 @@
         "title": "PreviewRequest",
         "type": "object"
       },
+      "PromoteRequest": {
+        "properties": {
+          "canaryPercent": {
+            "default": 10,
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Canarypercent",
+            "type": "integer"
+          },
+          "mode": {
+            "default": "SHADOW",
+            "pattern": "^(SHADOW|CANARY|FULL)$",
+            "title": "Mode",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "PromoteRequest",
+        "type": "object"
+      },
       "PromotionPatch": {
         "properties": {
           "campaignQuota": {
@@ -457,6 +487,45 @@
           "datasetId"
         ],
         "title": "SimulationRequest",
+        "type": "object"
+      },
+      "TrainingRequest": {
+        "properties": {
+          "datasetId": {
+            "title": "Datasetid",
+            "type": "string"
+          },
+          "numRounds": {
+            "default": 300,
+            "maximum": 5000.0,
+            "minimum": 10.0,
+            "title": "Numrounds",
+            "type": "integer"
+          },
+          "testFraction": {
+            "default": 0.25,
+            "exclusiveMaximum": 0.9,
+            "exclusiveMinimum": 0.05,
+            "title": "Testfraction",
+            "type": "number"
+          },
+          "xgboost": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Xgboost"
+          }
+        },
+        "required": [
+          "datasetId"
+        ],
+        "title": "TrainingRequest",
         "type": "object"
       },
       "ValidationError": {
@@ -1032,6 +1101,238 @@
         ]
       }
     },
+    "/admin/v1/models": {
+      "get": {
+        "operationId": "list_models_admin_v1_models_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Models",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/models/shadow/summary": {
+      "get": {
+        "operationId": "shadow_summary_admin_v1_models_shadow_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "maximum": 720,
+              "minimum": 1,
+              "title": "Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shadow Summary",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/models/{model_version}": {
+      "get": {
+        "operationId": "get_model_admin_v1_models__model_version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_version",
+            "required": true,
+            "schema": {
+              "title": "Model Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Model",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/models/{model_version}/promote": {
+      "post": {
+        "description": "Separation of duties: only an Approver promotes, and only a gated model.\nOffline metrics alone never promote (ML-006).",
+        "operationId": "promote_model_admin_v1_models__model_version__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_version",
+            "required": true,
+            "schema": {
+              "title": "Model Version",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Promote Model",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/models/{model_version}/rollback": {
+      "post": {
+        "operationId": "rollback_model_admin_v1_models__model_version__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "model_version",
+            "required": true,
+            "schema": {
+              "title": "Model Version",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "note",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Note"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rollback Model",
+        "tags": [
+          "models"
+        ]
+      }
+    },
     "/admin/v1/promotions": {
       "get": {
         "operationId": "list_promotions_admin_v1_promotions_get",
@@ -1356,6 +1657,125 @@
         "summary": "Control Simulation",
         "tags": [
           "simulations"
+        ]
+      }
+    },
+    "/admin/v1/training-jobs": {
+      "get": {
+        "operationId": "list_training_jobs_admin_v1_training_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Training Jobs",
+        "tags": [
+          "models"
+        ]
+      },
+      "post": {
+        "operationId": "create_training_job_admin_v1_training_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrainingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Training Job",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/training-jobs/{job_id}": {
+      "get": {
+        "operationId": "get_training_job_admin_v1_training_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Training Job",
+        "tags": [
+          "models"
         ]
       }
     },

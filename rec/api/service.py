@@ -1,6 +1,13 @@
-"""SERV-001..004 — recommendation orchestration, cache, fallback."""
+"""SERV-001..004 — recommendation orchestration, cache, fallback.
+
+Ranking is either the deterministic baseline (ML-001) or the promoted XGBoost model
+(ML-002), decided by the deployment row. Any model failure degrades to the baseline
+rather than to an error (SERV-003).
+"""
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 import uuid
 from datetime import UTC, datetime
@@ -21,9 +28,13 @@ from rec.core.ranking import (
     score_baseline,
     to_recommendations,
 )
-from rec.settings import settings
+from rec.ml import client as ranking_client
+from rec.ml import registry
+from rec.ml.vectorize import vectorize
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
+
+log = logging.getLogger("serving")
 
 
 class Stage:
@@ -47,10 +58,68 @@ class Stage:
         return _Ctx()
 
 
-def cache_key(customer_id: str, city: str, channel: str | None, limit: int) -> str:
-    """SERV-004 — context + model + ranking config are all part of the key."""
+def cache_key(customer_id: str, city: str, channel: str | None, limit: int,
+              model_version: str) -> str:
+    """SERV-004 — context, model version and ranking config are all part of the key, so
+    promoting a model cannot serve stale entries ranked by the previous one."""
     return (f"{customer_id}|{city}|{channel or 'ANY'}|{limit}"
-            f"|{settings.model_version}|{RANKING_CONFIG_VERSION}|{FEATURE_SCHEMA_VERSION}")
+            f"|{model_version}|{RANKING_CONFIG_VERSION}|{FEATURE_SCHEMA_VERSION}")
+
+
+def _ranker_for(deployment: dict, customer_id: str) -> tuple[str, str]:
+    """Returns (ranker, modelVersion) where ranker is BASELINE or MODEL."""
+    mode = deployment.get("mode", "BASELINE")
+    model_version = deployment.get("model_version")
+    if not model_version or mode in ("BASELINE", "SHADOW"):
+        return "BASELINE", registry.BASELINE_VERSION
+    if mode == "CANARY" and not registry.in_canary(
+            customer_id, int(deployment.get("canary_percent") or 0)):
+        return "BASELINE", registry.BASELINE_VERSION
+    return "MODEL", model_version
+
+
+def _vectors(candidates, features: dict, *, city_code: str, eligible: dict,
+             now: datetime) -> list[dict[str, float]]:
+    return [
+        vectorize(features, merchant_id=m.merchantId, merchant_rating=m.rating,
+                  merchant_channel=m.channel.value, merchant_category=m.categoryCode,
+                  merchant_city=m.cityCode, city_code=city_code,
+                  promo=eligible.get(m.merchantId), request_time=now)
+        for m in candidates
+    ]
+
+
+async def _run_shadow(store: OnlineStore, model_version: str, request_id: str,
+                      customer_id: str, vectors: list[dict[str, float]],
+                      candidate_ids: list[str], served_order: list[str],
+                      limit: int) -> None:
+    """Score the candidate set with the shadow model and record the disagreement.
+
+    Errors are swallowed on purpose: a shadow evaluation must never affect the customer
+    response or surface as a request failure.
+    """
+    try:
+        scores, inference_ms = await ranking_client.score(model_version, vectors)
+        ranked = [merchant_id for _, merchant_id in
+                  sorted(zip(scores, candidate_ids, strict=True),
+                         key=lambda pair: (-pair[0], pair[1]))][:limit]
+        await registry.record_shadow(
+            request_id, customer_id, model_version, "BASELINE",
+            _rank_agreement(served_order, ranked),
+            bool(served_order and ranked and served_order[0] == ranked[0]),
+            inference_ms)
+        await store.incr_metric("shadow_evaluations")
+    except Exception as exc:  # noqa: BLE001 - shadow failures are informational only
+        log.info("shadow evaluation skipped: %s", exc)
+        await store.incr_metric("shadow_failures")
+
+
+def _rank_agreement(a: list[str], b: list[str]) -> float:
+    """Share of positions where two orderings agree on the same merchant."""
+    if not a or not b:
+        return 0.0
+    pairs = min(len(a), len(b))
+    return sum(1 for i in range(pairs) if a[i] == b[i]) / pairs
 
 
 async def recommend(
@@ -79,7 +148,13 @@ async def recommend(
         personalizationAllowed=row["personalization_allowed"],
     )
     city = city_code or customer.cityCode
-    key = cache_key(customer_id, city, channel, limit)
+    with stage("deployment"):
+        deployment = await registry.deployment()
+    ranker, model_version = _ranker_for(deployment, customer_id)
+    debug["deployment"] = {"mode": deployment.get("mode"), "ranker": ranker,
+                           "modelVersion": model_version,
+                           "canaryPercent": deployment.get("canary_percent")}
+    key = cache_key(customer_id, city, channel, limit, model_version)
 
     if use_cache and not preview:
         with stage("cache"):
@@ -135,6 +210,8 @@ async def recommend(
         debug["dropped"] = dropped
         debug["candidateCount"] = len(candidates)
 
+    # Reason codes always come from the baseline components: they explain the offer to
+    # the customer and must stay stable regardless of which ranker ordered the list.
     with stage("ranking"):
         scored = []
         for merchant in candidates:
@@ -144,6 +221,32 @@ async def recommend(
             )
             scored.append((score, merchant, {"reasonCodes": reasons, "components": parts}))
         scored.sort(key=lambda x: (-x[0], x[1].merchantId))
+        baseline_order = [m.merchantId for _, m, _ in scored]
+        effective_version = registry.BASELINE_VERSION
+        degraded: str | None = None
+
+        if ranker == "MODEL" and candidates:
+            meta_by_merchant = {m.merchantId: meta for _, m, meta in scored}
+            vectors = _vectors(candidates, features, city_code=city, eligible=eligible, now=now)
+            try:
+                scores, inference_ms = await ranking_client.score(model_version, vectors)
+                scored = [
+                    (float(score), merchant,
+                     meta_by_merchant[merchant.merchantId] | {"ranker": "MODEL"})
+                    for score, merchant in zip(scores, candidates, strict=True)
+                ]
+                scored.sort(key=lambda x: (-x[0], x[1].merchantId))
+                effective_version = model_version
+                debug["inferenceMs"] = inference_ms
+                await store.incr_metric("ranking_model_scored")
+            except ranking_client.RankingUnavailable as exc:
+                degraded = exc.reason
+                debug["degradedTo"] = "BASELINE"
+                debug["degradeReason"] = exc.reason
+                await store.incr_metric(f"ranking_degraded_{exc.reason}")
+                await store.incr_metric("ranking_degraded")
+                log.warning("ranking unavailable (%s); serving baseline", exc.reason)
+
         if explain:
             debug["scored"] = [
                 {"merchantId": m.merchantId, "score": round(s, 6), **meta}
@@ -151,13 +254,25 @@ async def recommend(
             ]
         top = diversify(scored, limit)
 
+    # SHADOW: serve the baseline, compare what the model would have done. Fire-and-forget
+    # so the shadow call cannot enter the customer-facing latency budget.
+    shadow_version = deployment.get("model_version")
+    if (deployment.get("mode") == "SHADOW" and shadow_version and candidates
+            and not preview):
+        request_id_for_shadow = str(uuid.uuid4())
+        asyncio.create_task(_run_shadow(
+            store, shadow_version, request_id_for_shadow, customer_id,
+            _vectors(candidates, features, city_code=city, eligible=eligible, now=now),
+            [m.merchantId for m in candidates], baseline_order[:limit], limit))
+        debug["shadow"] = {"modelVersion": shadow_version, "requestId": request_id_for_shadow}
+
     response = RecommendationResponse(
         requestId=str(uuid.uuid4()),
         customerId=customer_id,
         generatedAt=now,
         featureAsOf=features.get("featureAsOf"),
-        modelVersion=settings.model_version,
-        source="LIVE",
+        modelVersion=effective_version,
+        source="LIVE" if degraded is None else "FALLBACK",
         stale=bool(features.get("coldStartFlag")),
         recommendations=to_recommendations(top, eligible),
     )
@@ -173,7 +288,11 @@ async def recommend(
 
 
 async def recommend_safe(store: OnlineStore, customer_id: str, **kwargs):
-    """SERV-003 fallback chain. Never raises for a known customer."""
+    """SERV-003 fallback chain. Never raises for a known customer.
+
+    Model failures are already handled inside `recommend` (degrade to baseline); this
+    outer net catches feature-store or catalog failures and serves popular merchants.
+    """
     try:
         return await recommend(store, customer_id, **kwargs)
     except KeyError:
@@ -191,7 +310,7 @@ async def recommend_safe(store: OnlineStore, customer_id: str, **kwargs):
         return (
             RecommendationResponse(
                 requestId=str(uuid.uuid4()), customerId=customer_id, generatedAt=now,
-                featureAsOf=None, modelVersion=settings.model_version, source="FALLBACK",
+                featureAsOf=None, modelVersion=registry.BASELINE_VERSION, source="FALLBACK",
                 stale=True, recommendations=to_recommendations(items, {}),
             ),
             {"fallbackReason": type(exc).__name__, "detail": str(exc)[:200]},

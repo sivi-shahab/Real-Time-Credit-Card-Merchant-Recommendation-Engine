@@ -26,10 +26,19 @@ class Settings(BaseSettings):
     stream_concurrency: int = 32
     redis_max_connections: int = 64
     pg_max_connections: int = 20
-    model_version: str = "baseline-1.0.0"
+    mlflow_tracking_uri: str = "sqlite:///./data/mlflow.db"
+    mlflow_experiment: str = "merchant-ranking"
+    model_dir: str = "./data/models"
+    ranking_service_url: str = "http://localhost:8100"
+    ranking_timeout_ms: int = 400
+    # Batches are small (<=200 rows); a wide thread pool costs more to start than it saves.
+    ranking_threads: int = 2
 
     # Demo auth. Replace with the BFF session + OIDC upstream in Fase 5.
-    admin_tokens: str = "admin-token:admin:Platform Operator,analyst-token:analyst:Analyst"
+    admin_tokens: str = (
+        "admin-token:admin:Platform Operator,analyst-token:analyst:Analyst,"
+        "ml-token:mlops:ML Engineer,approver-token:approver:Approver"
+    )
     customer_token_prefix: str = "cust-"
 
 

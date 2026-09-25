@@ -13,12 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from rec.api import jobs, service
+from rec.api import jobs, ml_jobs, service
 from rec.api.auth import Principal, customer_self, principal, require
 from rec.core.models import FEATURE_SCHEMA_VERSION, RANKING_CONFIG_VERSION
 from rec.core.ranking import DEFAULT_RESULTS, MAX_RESULTS
 from rec.generator.config import DatasetConfig
-from rec.settings import settings
+from rec.ml import client as ranking_client
+from rec.ml import registry
+from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
@@ -30,6 +32,7 @@ store = OnlineStore()
 async def lifespan(app: FastAPI):
     await pg.pool()
     yield
+    await ranking_client.close()
     await store.close()
     await pg.close()
 
@@ -468,10 +471,119 @@ async def eligibility_preview(body: EligibilityProbe,
 # ===================================================================== ops
 
 
+# ===================================================================== models
+
+
+class TrainingRequest(BaseModel):
+    datasetId: str
+    numRounds: int = Field(300, ge=10, le=5000)
+    testFraction: float = Field(0.25, gt=0.05, lt=0.9)
+    xgboost: dict[str, Any] | None = None
+
+
+@app.post("/admin/v1/training-jobs", status_code=202, tags=["models"])
+async def create_training_job(body: TrainingRequest, request: Request,
+                              p: Annotated[Principal, Depends(require("training:run"))]):
+    try:
+        job_id = await ml_jobs.create_training_job(
+            body.datasetId,
+            {"numRounds": body.numRounds, "testFraction": body.testFraction,
+             "xgboost": body.xgboost},
+            request.headers.get("idempotency-key"))
+    except FileNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    await pg.audit(p.subject, p.role, "training.start", f"trainingJob/{job_id}",
+                   changes=body.model_dump(exclude_none=True),
+                   trace_id=request.state.trace_id)
+    return {"jobId": job_id, "status": "QUEUED"}
+
+
+@app.get("/admin/v1/training-jobs", tags=["models"])
+async def list_training_jobs(p: Annotated[Principal, Depends(require("model:read"))],
+                             limit: int = Query(25, le=100)):
+    return await ml_jobs.list_jobs(limit)
+
+
+@app.get("/admin/v1/training-jobs/{job_id}", tags=["models"])
+async def get_training_job(job_id: str,
+                           p: Annotated[Principal, Depends(require("model:read"))]):
+    job = await ml_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "training job not found")
+    return job
+
+
+@app.get("/admin/v1/models", tags=["models"])
+async def list_models(p: Annotated[Principal, Depends(require("model:read"))],
+                      limit: int = Query(50, le=200)):
+    return {"deployment": await registry.deployment(),
+            "activeBaseline": registry.BASELINE_VERSION,
+            "servingFeatureSchemaVersion": VECTOR_SCHEMA_VERSION,
+            "models": await registry.list_models(limit)}
+
+
+@app.get("/admin/v1/models/{model_version}", tags=["models"])
+async def get_model(model_version: str,
+                    p: Annotated[Principal, Depends(require("model:read"))]):
+    model = await registry.get_model(model_version)
+    if model is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "model not found")
+    return model
+
+
+class PromoteRequest(BaseModel):
+    mode: str = Field("SHADOW", pattern="^(SHADOW|CANARY|FULL)$")
+    canaryPercent: int = Field(10, ge=0, le=100)
+    note: str | None = None
+
+
+@app.post("/admin/v1/models/{model_version}/promote", tags=["models"])
+async def promote_model(model_version: str, body: PromoteRequest, request: Request,
+                        p: Annotated[Principal, Depends(require("model:promote"))]):
+    """Separation of duties: only an Approver promotes, and only a gated model.
+    Offline metrics alone never promote (ML-006)."""
+    # Warm before flipping: a model the ranking service cannot load must not be promoted,
+    # and a cold artifact load can blow the serving timeout on the first requests.
+    try:
+        await ranking_client.warm(model_version)
+    except ranking_client.RankingUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            f"ranking service cannot load {model_version}: {exc.reason}")
+    try:
+        deployment = await registry.promote(
+            model_version, mode=body.mode, canary_percent=body.canaryPercent,
+            actor=p.subject, note=body.note)
+    except registry.PromotionRefused as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    await store.invalidate_all_recommendations()  # SERV-004: model version is in the key
+    await pg.audit(p.subject, p.role, "model.promote", f"model/{model_version}",
+                   changes=body.model_dump(), trace_id=request.state.trace_id)
+    return deployment
+
+
+@app.post("/admin/v1/models/{model_version}/rollback", tags=["models"])
+async def rollback_model(model_version: str, request: Request,
+                         p: Annotated[Principal, Depends(require("model:rollback"))],
+                         note: str | None = None):
+    deployment = await registry.rollback(p.subject, note=note)
+    await store.invalidate_all_recommendations()
+    await pg.audit(p.subject, p.role, "model.rollback", f"model/{model_version}",
+                   changes={"note": note, "now": deployment.get("mode")},
+                   trace_id=request.state.trace_id)
+    return deployment
+
+
+@app.get("/admin/v1/models/shadow/summary", tags=["models"])
+async def shadow_summary(p: Annotated[Principal, Depends(require("model:read"))],
+                         hours: int = Query(24, ge=1, le=720)):
+    return await registry.shadow_summary(hours)
+
+
 @app.get("/admin/v1/metrics/overview", tags=["ops"])
 async def metrics_overview(p: Annotated[Principal, Depends(require("metrics:read"))]):
     """UI-001 — unavailable metrics are returned as null, never as zero."""
     counters = await store.metrics()
+    deployment = await registry.deployment()
     conn = await pg.pool()
     row = await conn.fetchrow(
         """SELECT count(*) FILTER (WHERE outcome='APPLIED') AS applied,
@@ -501,10 +613,16 @@ async def metrics_overview(p: Annotated[Principal, Depends(require("metrics:read
         },
         "serving": {
             "recommendationsServed": served,
+            "modelScoredRequests": counters.get("ranking_model_scored", 0),
+            "rankingDegradedRate": round(counters.get("ranking_degraded", 0) / served, 4)
+            if served else None,
+            "shadowEvaluations": counters.get("shadow_evaluations", 0),
             "cacheHitRate": round(hits / (hits + misses), 4) if (hits + misses) else None,
             "fallbackRate": round(counters.get("recommendation_fallback", 0) / served, 4)
             if served else None,
-            "activeModel": settings.model_version,
+            "activeModel": deployment.get("model_version") or registry.BASELINE_VERSION,
+            "deploymentMode": deployment.get("mode"),
+            "canaryPercent": deployment.get("canary_percent"),
             "rankingConfigVersion": RANKING_CONFIG_VERSION,
             "featureSchemaVersion": FEATURE_SCHEMA_VERSION,
         },
