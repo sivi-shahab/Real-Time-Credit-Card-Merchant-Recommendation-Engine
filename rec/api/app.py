@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -32,9 +33,10 @@ from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, LEARNING_SWITCH, setup_logging,
 from rec.settings import settings
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
-from rec.store.redis_store import OnlineStore
+from rec.store.redis_store import MODEL_FIELD, OnlineStore
 
 store = OnlineStore()
+log = logging.getLogger("api")
 
 
 LEARNING_SWITCHES = ("auto_retrain_interval_hours", "auto_retrain_min_new_impressions",
@@ -154,15 +156,28 @@ async def get_recommendations(
         )
     except KeyError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"customer {customer_id} not found")
+    try:  # S-5: feedback is later checked against exactly this slate
+        await store.record_served(customer_id, response.requestId, response.modelVersion,
+                                  [item.merchantId for item in response.recommendations])
+    except Exception as exc:  # noqa: BLE001 - serving never fails for it; feedback does
+        log.warning("served slate not recorded, feedback for it will be refused: %s", exc)
     # pydantic-core serialises directly; FastAPI's jsonable_encoder walk cost ~2 ms here
     return Response(response.model_dump_json(), media_type="application/json")
 
 
+class ImpressionItem(BaseModel):
+    impressionId: str | None = None
+    merchantId: str
+    position: int = Field(ge=0, description="0-based place in the response (rank - 1)")
+
+
 class ImpressionBatch(BaseModel):
+    """What the app displayed from one recommendation response."""
     requestId: str
     customerId: str
+    # Ignored: the served model is taken from the response record, not from the client.
     modelVersion: str | None = None
-    items: list[dict[str, Any]] = Field(default_factory=list)
+    items: list[ImpressionItem] = Field(default_factory=list, max_length=MAX_RESULTS)
 
 
 def _own_feedback(p: Principal, customer_id: str) -> None:
@@ -177,13 +192,26 @@ def _own_feedback(p: Principal, customer_id: str) -> None:
 async def record_impressions(batch: ImpressionBatch,
                              p: Annotated[Principal, Depends(principal)]):
     _own_feedback(p, batch.customerId)
+    try:
+        served = await store.served(batch.customerId, batch.requestId)
+    except Exception:  # noqa: BLE001 - cannot verify, so do not accept (fail closed)
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "impressions cannot be verified right now; retry later")
+    if not served:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            "this request was not served to this customer, or has expired")
+    for item in batch.items:
+        if served.get(item.merchantId) != str(item.position):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                                f"merchant {item.merchantId} was not served at position "
+                                f"{item.position} in this response")
     conn = await pg.pool()
     await conn.executemany(
         """INSERT INTO impressions (impression_id, request_id, customer_id, merchant_id,
              position, model_version, occurred_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
            ON CONFLICT (impression_id) DO NOTHING""",
-        [(i.get("impressionId") or str(uuid.uuid4()), batch.requestId, batch.customerId,
-          i["merchantId"], int(i.get("position", 0)), batch.modelVersion,
+        [(i.impressionId or str(uuid.uuid4()), batch.requestId, batch.customerId,
+          i.merchantId, i.position, served[MODEL_FIELD],
           datetime.now(UTC)) for i in batch.items])
     await store.incr_metric("impressions", len(batch.items))
     return {"accepted": len(batch.items)}
@@ -200,6 +228,13 @@ class Interaction(BaseModel):
 async def record_interaction(body: Interaction, p: Annotated[Principal, Depends(principal)]):
     _own_feedback(p, body.customerId)
     conn = await pg.pool()
+    shown = await conn.fetchrow(
+        "SELECT customer_id, merchant_id FROM impressions WHERE impression_id = $1",
+        body.impressionId)
+    if shown is None or (shown["customer_id"], shown["merchant_id"]) != (
+            body.customerId, body.merchantId):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            "no such impression of this merchant for this customer")
     await conn.execute(
         """INSERT INTO interactions (interaction_id, impression_id, customer_id, merchant_id,
              interaction_type, occurred_at) VALUES ($1,$2,$3,$4,$5,$6)""",

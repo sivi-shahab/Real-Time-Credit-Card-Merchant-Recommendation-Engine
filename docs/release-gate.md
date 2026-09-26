@@ -26,7 +26,7 @@ production step remains · **OPEN** not met.
 | Feedback accepted only from the customer it describes (T-7) | PASS | `test_feedback_is_accepted_only_from_the_customer_it_describes` |
 | Automatic learning cannot put a model in front of customers without an Approver (E-6) | PASS | `test_auto_trained_model_reaches_shadow_only_while_nothing_serves` (also audited as `system:auto-retrain`), `test_rollback_never_puts_a_shadow_model_on_full_traffic` |
 | Bandit state is data, not code (T-9) | PARTIAL | JSON, not pickle: `test_state_round_trips_through_json_and_keeps_learning_identically`. Its integrity waits on Redis AUTH |
-| Live feedback bound to served responses (S-5) | OPEN | keep `AUTO_RETRAIN_INTERVAL_HOURS=0` until closed |
+| Live feedback bound to served responses (S-5) | PARTIAL | impressions must match a slate served to that customer (merchant, position; served model recorded), clicks must match an own impression: `test_feedback_must_match_a_slate_that_was_served`. Clicks on items really shown cannot be proven; enable auto-retrain only behind a per-customer rate limit at the edge (D-1) |
 | Learning switches under change control (T-10) | PARTIAL | a change is audited (`system:config`) and alerted (`LearningSwitchChanged`): `test_learning_settings_are_exported_and_a_change_is_audited`. Approval before a change ships is not built |
 | Customer channel authentication (threat S-2) | OPEN | `cust-<id>` is a dev stand-in, refused outside local/test/ci; real mobile-channel token verification is not built |
 | Model artifact integrity between approval and load (T-4) | OPEN | record SHA-256 at training, verify at warm |
@@ -37,7 +37,7 @@ production step remains · **OPEN** not met.
 
 | Check | Status | Evidence |
 |---|---|---|
-| AC-009 erasure, maker-checker, not rematerialised by replay or reload | PASS | `test_ac009_erased_customer_is_not_rematerialised_by_replay` (includes invalid events for the erased id; also removes the promo-holdout arm and bandit contexts) |
+| AC-009 erasure, maker-checker, not rematerialised by replay or reload | PASS | `test_ac009_erased_customer_is_not_rematerialised_by_replay` (includes invalid events for the erased id; also removes the promo-holdout arm, bandit contexts and served-slate records) |
 | Erasure scope beyond Postgres/Redis | PARTIAL | Kafka retention, on-disk datasets (filtered on read) including auto-retrain `live-*` exports, old MLflow artifacts, immutable audit rows — legal to confirm (`docs/runbooks.md#erasure`) |
 | Retention of auto-retrain exports (I-9) | PARTIAL | newest 3 kept plus those in use, deletions audited: `test_prune_keeps_newest_and_pinned_and_touches_nothing_else`, `test_export_retention_spares_the_dataset_behind_a_serving_model`. Legal to confirm that erased customers may remain in retained exports until they age out |
 | Promo holdout withholds offers from real customers (ADR-0010) | OPEN | business and legal approval of size, duration and consumer-protection position before `PROMO_HOLDOUT_PERCENT > 0` |

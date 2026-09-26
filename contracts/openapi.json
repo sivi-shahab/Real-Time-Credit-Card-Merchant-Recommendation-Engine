@@ -288,6 +288,7 @@
         "type": "object"
       },
       "ImpressionBatch": {
+        "description": "What the app displayed from one recommendation response.",
         "properties": {
           "customerId": {
             "title": "Customerid",
@@ -295,9 +296,9 @@
           },
           "items": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ImpressionItem"
             },
+            "maxItems": 20,
             "title": "Items",
             "type": "array"
           },
@@ -322,6 +323,37 @@
           "customerId"
         ],
         "title": "ImpressionBatch",
+        "type": "object"
+      },
+      "ImpressionItem": {
+        "properties": {
+          "impressionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impressionid"
+          },
+          "merchantId": {
+            "title": "Merchantid",
+            "type": "string"
+          },
+          "position": {
+            "description": "0-based place in the response (rank - 1)",
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "merchantId",
+          "position"
+        ],
+        "title": "ImpressionItem",
         "type": "object"
       },
       "Interaction": {

@@ -164,7 +164,7 @@
       "from": "api",
       "to": "redis",
       "y": 361,
-      "label": "state, cache, bandit ctx",
+      "label": "state, cache, slates, ctx",
       "variant": "default"
     },
     {

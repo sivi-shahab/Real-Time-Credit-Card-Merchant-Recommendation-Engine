@@ -19,6 +19,9 @@ DEDUP_PREFIX = "evt:"
 CACHE_PREFIX = "rec:"
 CACHE_INDEX_PREFIX = "recidx:"
 ERASED_KEY = "erased"  # copy of the erased_customers tombstones (AC-009)
+SERVED_PREFIX = "served:"  # + customerId + ":" + requestId -> merchant -> position (S-5)
+SERVED_TTL_SECONDS = 24 * 3600  # feedback for a slate must arrive within a day
+MODEL_FIELD = "__model"
 
 
 def _client() -> redis.Redis:
@@ -156,7 +159,24 @@ class OnlineStore:
     async def erase_customer(self, customer_id: str) -> int:
         await self.r.sadd(ERASED_KEY, customer_id)  # tombstone first: stops new writes
         deleted = await self.r.delete(STATE_PREFIX + customer_id)
+        served = [k async for k in self.r.scan_iter(match=f"{SERVED_PREFIX}{customer_id}:*")]
+        if served:
+            deleted += await self.r.delete(*served)
         return deleted + await self.invalidate_customer(customer_id)
+
+    # ---------------------------------------------------------- served slates (S-5)
+    async def record_served(self, customer_id: str, request_id: str, model_version: str,
+                            merchant_ids: list[str]) -> None:
+        """What this customer was shown, so feedback can be checked against it."""
+        key = f"{SERVED_PREFIX}{customer_id}:{request_id}"
+        mapping = {m: position for position, m in enumerate(merchant_ids)}
+        async with self.r.pipeline(transaction=True) as pipe:
+            pipe.hset(key, mapping={**mapping, MODEL_FIELD: model_version})
+            pipe.expire(key, SERVED_TTL_SECONDS)
+            await pipe.execute()
+
+    async def served(self, customer_id: str, request_id: str) -> dict[str, str]:
+        return await self.r.hgetall(f"{SERVED_PREFIX}{customer_id}:{request_id}")
 
     # ---------------------------------------------------------- ops
     async def incr_metric(self, name: str, amount: int = 1) -> None:

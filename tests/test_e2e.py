@@ -814,22 +814,26 @@ async def test_learning_status_reports_every_loop(client, replayed, monkeypatch)
 
 
 async def test_feedback_is_accepted_only_from_the_customer_it_describes(client, replayed):
-    """T-7: feedback now trains models, so no staff role and no other customer may write
-    it for a customer."""
+    """T-7: feedback trains models, so no staff role and no other customer may write it."""
     conn = await pg.pool()
-    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
-    impression = {"requestId": "req-t7", "customerId": cid,
-                  "items": [{"impressionId": "imp-t7", "merchantId": "M1", "position": 0}]}
-    click = {"impressionId": "imp-t7", "customerId": cid, "merchantId": "M1",
+    cid, other = [r["customer_id"] for r in await conn.fetch(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 2""")]
+    own = {"Authorization": f"Bearer cust-{cid}"}
+    body = (await client.get(f"/api/v1/customer/{cid}/recommendations?refresh=true",
+                             headers=own)).json()
+    first = body["recommendations"][0]["merchantId"]
+    impression = {"requestId": body["requestId"], "customerId": cid,
+                  "items": [{"impressionId": "imp-t7", "merchantId": first, "position": 0}]}
+    click = {"impressionId": "imp-t7", "customerId": cid, "merchantId": first,
              "interactionType": "CLICK"}
     try:
         for headers in (ADMIN, ANALYST, ML, {"Authorization": "Bearer viewer-token"},
-                        {"Authorization": "Bearer cust-someone-else"}):
+                        {"Authorization": f"Bearer cust-{other}"}):
             assert (await client.post("/api/v1/feedback/impressions", json=impression,
                                       headers=headers)).status_code == 403
             assert (await client.post("/api/v1/feedback/interactions", json=click,
                                       headers=headers)).status_code == 403
-        own = {"Authorization": f"Bearer cust-{cid}"}
         assert (await client.post("/api/v1/feedback/impressions", json=impression,
                                   headers=own)).status_code == 202
         assert (await client.post("/api/v1/feedback/interactions", json=click,
@@ -837,6 +841,63 @@ async def test_feedback_is_accepted_only_from_the_customer_it_describes(client, 
     finally:
         await conn.execute("DELETE FROM interactions WHERE impression_id = 'imp-t7'")
         await conn.execute("DELETE FROM impressions WHERE impression_id = 'imp-t7'")
+
+
+async def test_feedback_must_match_a_slate_that_was_served(client, replayed):
+    """S-5: an impression names a response this customer received, a merchant in it and
+    the position it held; a click names this customer's own impression."""
+    conn = await pg.pool()
+    cid, other = [r["customer_id"] for r in await conn.fetch(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 2""")]
+    own, theirs = ({"Authorization": f"Bearer cust-{c}"} for c in (cid, other))
+    mine = (await client.get(f"/api/v1/customer/{cid}/recommendations?refresh=true",
+                             headers=own)).json()
+    their = (await client.get(f"/api/v1/customer/{other}/recommendations?refresh=true",
+                              headers=theirs)).json()
+    served = [item["merchantId"] for item in mine["recommendations"]]
+    unserved = next(m["merchant_id"] for m in await conn.fetch("SELECT merchant_id FROM merchants")
+                    if m["merchant_id"] not in served)
+
+    async def impressions(request_id, items, headers=own, **extra):
+        return (await client.post("/api/v1/feedback/impressions", headers=headers, json={
+            "requestId": request_id, "customerId": cid, "items": items, **extra})).status_code
+
+    ids = []
+    try:
+        assert await impressions("never-served", [{"merchantId": served[0], "position": 0}]) == 422
+        assert await impressions(their["requestId"],   # served, but to someone else
+                                 [{"merchantId": their["recommendations"][0]["merchantId"],
+                                   "position": 0}]) == 422
+        assert await impressions(mine["requestId"], [{"merchantId": unserved,
+                                                      "position": 0}]) == 422
+        assert await impressions(mine["requestId"], [{"merchantId": served[1],
+                                                      "position": 0}]) == 422  # moved up
+        assert await impressions(mine["requestId"], [{"merchantId": served[0],
+                                                      "position": "top"}]) == 422
+        assert await impressions(mine["requestId"], [{"merchantId": served[0],
+                                                      "position": 0}] * 21) == 422  # > 20
+        ids = [f"imp-s5-{n}" for n in range(len(served))]
+        assert await impressions(mine["requestId"], [
+            {"impressionId": i, "merchantId": m, "position": n}
+            for n, (i, m) in enumerate(zip(ids, served))], modelVersion="forged") == 202
+        # the served model is recorded, not the one the client claimed
+        assert set(r["model_version"] for r in await conn.fetch(
+            "SELECT model_version FROM impressions WHERE impression_id = ANY($1)", ids)) == {
+            mine["modelVersion"]}
+
+        async def click(impression_id, merchant, headers=own, customer=cid):
+            return (await client.post("/api/v1/feedback/interactions", headers=headers, json={
+                "impressionId": impression_id, "customerId": customer, "merchantId": merchant,
+                "interactionType": "CLICK"})).status_code
+
+        assert await click("no-such-impression", served[0]) == 422
+        assert await click(ids[0], served[1]) == 422             # wrong merchant
+        assert await click(ids[0], served[0], theirs, other) == 422  # not their impression
+        assert await click(ids[0], served[0]) == 202
+    finally:
+        await conn.execute("DELETE FROM interactions WHERE impression_id = ANY($1)", ids)
+        await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)", ids)
 
 
 async def test_export_retention_spares_the_dataset_behind_a_serving_model(
@@ -988,6 +1049,7 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
     await conn.execute("""INSERT INTO promo_experiment (customer_id, arm, holdout_percent)
                           VALUES ($1, 'TREATMENT', 10) ON CONFLICT DO NOTHING""", cid)
     await store.r.hset(bandit.context_key(cid, "req-erase"), "M1", "{}")
+    await store.record_served(cid, "req-erase", "baseline-1.0.0", ["M1"])
 
     filed = await client.post("/admin/v1/erasure-requests",
                               json={"customerId": cid, "reason": "PDP deletion request"},
@@ -1002,6 +1064,7 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
     assert done.status_code == 200 and done.json()["deleted"]["transaction_log"] > 0
     assert done.json()["deleted"]["promo_experiment"] == 1
     assert not await store.r.exists(bandit.context_key(cid, "req-erase"))
+    assert not await store.served(cid, "req-erase")
 
     # replay the whole archive, as after a disaster or a reprocessing run
     processor = FeatureProcessor(store, producer=None)

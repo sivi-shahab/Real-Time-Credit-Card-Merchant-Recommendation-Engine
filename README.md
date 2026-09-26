@@ -334,11 +334,12 @@ most:
    (ADR-0008), the challenger ranking (ADR-0009) and the uplift estimator (ADR-0010, on a
    planted effect; generated purchases do not respond to promos) all need re-checking on
    live logs before any of them drives a decision.
-10. **Learning loops before real feedback.** Feedback is not yet bound to what was
-    served, the learning switches are env vars nobody approves (a change is audited and
-    alerted), and retained auto-retrain exports keep an erased customer until they age
-    out (threats S-5, T-10, I-9). Keep auto-retrain and the promo holdout off
-    until those close; the holdout also needs business and legal approval.
+10. **Learning loops before real feedback.** Feedback must match a response actually
+    served to that customer, but reported clicks on items really shown cannot be proven
+    and nothing rate-limits them; the learning switches are env vars nobody approves (a
+    change is audited and alerted); retained auto-retrain exports keep an erased customer
+    until they age out (threats S-5, T-10, I-9). Enable auto-retrain only behind an edge
+    rate limit; the promo holdout also needs business and legal approval.
 
 ## Synthetic data is simulation, not evidence
 

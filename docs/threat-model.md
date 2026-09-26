@@ -44,7 +44,7 @@ fraud detection.
 | S-2 | Forged customer identity: `cust-<id>` is guessable | B1 | Fails closed outside dev environments. Real channel token verification (the mobile platform's JWT/mTLS) is **not built**, so the customer API has no production auth yet | `test_static_tokens_are_dead_outside_dev` | Open |
 | S-3 | Anyone who can reach Kafka publishes fake transactions | B3 | Schema + reference validation and quarantine limit the damage, but they do not authenticate the producer. Needs SASL/mTLS and per-topic ACLs (produce on `cc.transactions` = ingestion only) | `test_pipeline_applies_and_quarantines_per_spec` | Open |
 | S-4 | Substituted or replayed id_token at login | B2 | Single-use state (10 min), nonce, issuer, audience, expiry checked. Signature not verified — relies on the TLS back channel (ADR-0006) | `test_oidc_rejects_wrong_nonce_audience_or_role_set` | Partial |
-| S-5 | A genuine customer fabricates feedback: impressions with any `requestId`, merchant or position, and clicks on them | B1 | Only for their own id (T-7). The bandit learns only impressions whose served context it stored, so an invented `requestId` teaches it nothing. The auto-retrain export takes every impression: feedback is not bound to a served response and not rate-limited | `test_feedback_is_accepted_only_from_the_customer_it_describes`, `test_online_bandit_shadows_live_requests_and_learns_each_impression_once` | Open |
+| S-5 | A genuine customer fabricates feedback: impressions with any `requestId`, merchant or position, and clicks on them | B1 | Every served response is recorded per customer (Redis, 24 h). An impression must name a response this customer received, a merchant in it and the position it held; the served model version is stored, not the client's; items are typed, at most 20. A click must name this customer's own impression of that merchant. Unverifiable feedback (Redis down) is refused. Residual: clicks on items that really were shown cannot be proven real, and there is no per-customer rate limit (D-1) | `test_feedback_must_match_a_slate_that_was_served`, `test_feedback_is_accepted_only_from_the_customer_it_describes` | Partial |
 
 ## Tampering
 
@@ -78,7 +78,7 @@ fraud detection.
 | I-4 | Internals leaked in errors | B1, B2 | Uniform error body (code, message, traceId); fallback diagnostics redacted and admin-only | `test_errors_are_uniform_and_requests_are_bounded` | Mitigated |
 | I-5 | Unauthenticated internal endpoints reachable: ranking `:8100`, MLflow `:5000`, Prometheus `:9090`, `/metrics`, Keycloak admin with default password | B4, B5 | Published on host ports for local work only. Production: cluster-internal services, network policies, SSO in front of MLflow/Prometheus, no default credentials | — | Open |
 | I-6 | Traffic read in transit | all | Plaintext locally. TLS on every external and internal hop | — | Open |
-| I-7 | Erased customer's data survives | B3, B4 | AC-009 maker-checker erasure with tombstones honoured by stream, reload, rebuild and training; it also deletes the promo-holdout arm and the bandit's stored contexts. Kafka retention, on-disk datasets (including `live-*` exports), old MLflow artifacts and backups taken before the erasure are outside it | `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Partial |
+| I-7 | Erased customer's data survives | B3, B4 | AC-009 maker-checker erasure with tombstones honoured by stream, reload, rebuild and training; it also deletes the promo-holdout arm, the bandit's stored contexts and the served-slate records. Kafka retention, on-disk datasets (including `live-*` exports), old MLflow artifacts and backups taken before the erasure are outside it | `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Partial |
 | I-8 | Bulk export of customer data | B2 | No export endpoint; list endpoints capped at 200 rows and paginated | — | Mitigated |
 | I-9 | Every auto-retrain run copies customer behaviour to disk | B5 | After each run only the newest `AUTO_RETRAIN_KEEP_EXPORTS` (3) exports stay, plus any a job is still reading and any behind a serving or roll-back model (kept reproducible); deletions are audited (`dataset.prune`). Only `live-<timestamp>` directories are ever deleted. Erased customers stay in retained exports until they age out; training filters them on read | `test_prune_keeps_newest_and_pinned_and_touches_nothing_else`, `test_export_retention_spares_the_dataset_behind_a_serving_model`, `test_auto_retrain_exports_live_feedback_once_past_the_threshold` | Partial |
 
@@ -113,9 +113,10 @@ fraud detection.
 2. **S-3 / I-6 / T-6 / I-5** — no transport security or service authentication on
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
 3. **T-4** — model artifacts are not integrity-checked between approval and load.
-4. **S-5 / T-10 / I-9** — live feedback is not bound to what was served, the learning
-   switches are env vars nobody approves (changes are audited and alerted), and retained
-   training exports keep erased customers until they age out. Keep
+4. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
+   report clicks they never made and nothing rate-limits them; the learning switches are
+   env vars nobody approves (changes are audited and alerted); retained training exports
+   keep erased customers until they age out. Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
 5. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.

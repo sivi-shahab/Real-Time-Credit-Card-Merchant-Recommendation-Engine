@@ -199,7 +199,7 @@
       "from": "api",
       "to": "redis",
       "y": 417,
-      "label": "put cache",
+      "label": "put cache, served slate",
       "variant": "dashed"
     },
     {
@@ -238,7 +238,7 @@
       "dot": "emerald",
       "title": "Happy path",
       "items": [
-        "Token must match the customer id (AC-006)",
+        "Token must match the customer id; the served slate is recorded",
         "Cache hit: promos re-checked, source CACHE; key has model + holdout arm"
       ]
     },
