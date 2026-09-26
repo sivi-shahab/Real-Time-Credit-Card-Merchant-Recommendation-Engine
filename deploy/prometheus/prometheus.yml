@@ -9,3 +9,5 @@ scrape_configs:
     static_configs: [{targets: ["ranking:8100"]}]
   - job_name: stream
     static_configs: [{targets: ["stream:9102"]}]
+  - job_name: worker
+    static_configs: [{targets: ["worker:9103"]}]

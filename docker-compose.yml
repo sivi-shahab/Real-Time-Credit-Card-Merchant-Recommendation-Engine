@@ -106,6 +106,18 @@ services:
       api: {condition: service_started}
       kafka: {condition: service_healthy}
 
+  # Training queue, scheduled uplift report and the learning loops (ADR-0012), so
+  # none of it runs on an API replica. Scale it; jobs and passes are locked.
+  worker:
+    build: {context: ., args: {EXTRAS: "[causal]"}}
+    command: python -m rec.worker
+    environment: *backend_env
+    volumes: ["./data:/app/data"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      ranking: {condition: service_started}
+
   dashboard:
     build: ./dashboard  # same-origin: nginx proxies /api, /admin, /bff to the API
     ports: ["5173:80"]

@@ -445,7 +445,7 @@ rect.c-bg-rect { fill: var(--bg); }
 
         <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="1" x="48" y="238" width="984" height="162" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="406" width="984" height="78" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="406" width="984" height="50" rx="10" class="c-lane" stroke-width="1"/>
 
         <!-- Lifelines -->
         <path d="M 129.5 142 L 129.5 500" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
@@ -456,10 +456,12 @@ rect.c-bg-rect { fill: var(--bg); }
         <path d="M 972.5 142 L 972.5 500" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
 
         <!-- Activations -->
-        <rect x="293.1" y="165" width="10" height="314" rx="3" class="c-mask"/>
-        <rect x="293.1" y="165" width="10" height="314" rx="3" class="c-backend" stroke-width="1"/>
-        <rect x="630.3" y="277" width="10" height="118" rx="3" class="c-mask"/>
-        <rect x="630.3" y="277" width="10" height="118" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="293.1" y="165" width="10" height="62" rx="3" class="c-mask"/>
+        <rect x="293.1" y="165" width="10" height="62" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="630.3" y="244" width="10" height="151" rx="3" class="c-mask"/>
+        <rect x="630.3" y="244" width="10" height="151" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="293.1" y="417" width="10" height="34" rx="3" class="c-mask"/>
+        <rect x="293.1" y="417" width="10" height="34" rx="3" class="c-backend" stroke-width="1"/>
 
         <!-- Messages -->
         <g data-edge-from="console" data-edge-to="api" data-edge-label="POST /training-jobs" data-edge-key="0" data-edge-id="submit">
@@ -486,75 +488,67 @@ rect.c-bg-rect { fill: var(--bg); }
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="pg" data-edge-label="RUNNING, erased ids" data-edge-key="3" data-edge-id="running">
-          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="running" data-composition-points="305.1,249;459.7,249" d="M 305.1 249 L 459.7 249" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="trainer" data-edge-to="pg" data-edge-label="claim (SKIP LOCKED)" data-edge-key="3" data-edge-id="claim">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="pg" data-composition-edge-id="claim" data-composition-points="628.3,249;473.7,249" d="M 628.3 249 L 473.7 249" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
-          <rect x="327" y="229" width="110.8" height="16" rx="3" class="c-mask"/>
-          <text x="382.4" y="239" class="t-backend" font-size="9" text-anchor="middle">RUNNING, erased ids</text>
+          <rect x="495.6" y="229" width="110.8" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="239" class="t-backend" font-size="9" text-anchor="middle">claim (SKIP LOCKED)</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="trainer" data-edge-label="train(tuneTrials)" data-edge-key="4" data-edge-id="start">
-          <path data-composition-edge-from="api" data-composition-edge-to="trainer" data-composition-edge-id="start" data-composition-points="305.1,277;628.3,277" d="M 305.1 277 L 628.3 277" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="trainer" data-edge-to="data" data-edge-label="read dataset" data-edge-key="4" data-edge-id="read">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="data" data-composition-edge-id="read" data-composition-points="642.3,277;796.9,277" d="M 642.3 277 L 796.9 277" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="416.5" y="257" width="100.4" height="16" rx="3" class="c-mask"/>
-          <text x="466.7" y="267" class="t-messagebus" font-size="9" text-anchor="middle">train(tuneTrials)</text>
+          <rect x="682.3999999999999" y="257" width="74.4" height="16" rx="3" class="c-mask"/>
+          <text x="719.5999999999999" y="267" class="t-backend" font-size="9" text-anchor="middle">read dataset</text>
         </g>
         </g>
 
-        <g data-edge-from="trainer" data-edge-to="data" data-edge-label="read dataset" data-edge-key="5" data-edge-id="read">
-          <path data-composition-edge-from="trainer" data-composition-edge-to="data" data-composition-edge-id="read" data-composition-points="642.3,305;796.9,305" d="M 642.3 305 L 796.9 305" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="trainer" data-edge-to="data" data-edge-label="save model + metadata" data-edge-key="5" data-edge-id="save">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="data" data-composition-edge-id="save" data-composition-points="642.3,305;796.9,305" d="M 642.3 305 L 796.9 305" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="682.3999999999999" y="285" width="74.4" height="16" rx="3" class="c-mask"/>
-          <text x="719.5999999999999" y="295" class="t-backend" font-size="9" text-anchor="middle">read dataset</text>
+          <rect x="658.9999999999999" y="285" width="121.2" height="16" rx="3" class="c-mask"/>
+          <text x="719.5999999999999" y="295" class="t-backend" font-size="9" text-anchor="middle">save model + metadata</text>
         </g>
         </g>
 
-        <g data-edge-from="trainer" data-edge-to="data" data-edge-label="save model + metadata" data-edge-key="6" data-edge-id="save">
-          <path data-composition-edge-from="trainer" data-composition-edge-to="data" data-composition-edge-id="save" data-composition-points="642.3,333;796.9,333" d="M 642.3 333 L 796.9 333" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="trainer" data-edge-to="mlflow" data-edge-label="log run + tuning" data-edge-key="6" data-edge-id="log">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="mlflow" data-composition-edge-id="log" data-composition-points="642.3,333;965.5,333" d="M 642.3 333 L 965.5 333" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="658.9999999999999" y="313" width="121.2" height="16" rx="3" class="c-mask"/>
-          <text x="719.5999999999999" y="323" class="t-backend" font-size="9" text-anchor="middle">save model + metadata</text>
+          <rect x="756.3" y="313" width="95.2" height="16" rx="3" class="c-mask"/>
+          <text x="803.9" y="323" class="t-backend" font-size="9" text-anchor="middle">log run + tuning</text>
         </g>
         </g>
 
-        <g data-edge-from="trainer" data-edge-to="mlflow" data-edge-label="log run + tuning" data-edge-key="7" data-edge-id="log">
-          <path data-composition-edge-from="trainer" data-composition-edge-to="mlflow" data-composition-edge-id="log" data-composition-points="642.3,361;965.5,361" d="M 642.3 361 L 965.5 361" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="trainer" data-edge-to="pg" data-edge-label="record model, COMPLETED" data-edge-key="7" data-edge-id="record">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="pg" data-composition-edge-id="record" data-composition-points="628.3,361;473.7,361" d="M 628.3 361 L 473.7 361" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
-          <rect x="756.3" y="341" width="95.2" height="16" rx="3" class="c-mask"/>
-          <text x="803.9" y="351" class="t-backend" font-size="9" text-anchor="middle">log run + tuning</text>
+          <rect x="485.2" y="341" width="131.60000000000002" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="351" class="t-backend" font-size="9" text-anchor="middle">record model, COMPLETED</text>
         </g>
         </g>
 
-        <g data-edge-from="trainer" data-edge-to="api" data-edge-label="result + gates" data-edge-key="8" data-edge-id="result">
-          <path data-composition-edge-from="trainer" data-composition-edge-to="api" data-composition-edge-id="result" data-composition-points="628.3,389;305.1,389" d="M 628.3 389 L 305.1 389" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="trainer" data-edge-to="pg" data-edge-label="auto job: SHADOW if idle" data-edge-key="8" data-edge-id="autoshadow">
+          <path data-composition-edge-from="trainer" data-composition-edge-to="pg" data-composition-edge-id="autoshadow" data-composition-points="628.3,389;473.7,389" d="M 628.3 389 L 473.7 389" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="424.3" y="369" width="84.8" height="16" rx="3" class="c-mask"/>
-          <text x="466.7" y="379" class="t-muted" font-size="9" text-anchor="middle">result + gates</text>
+          <rect x="482.6" y="369" width="136.8" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="379" class="t-messagebus" font-size="9" text-anchor="middle">auto job: SHADOW if idle</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="pg" data-edge-label="record model, COMPLETED" data-edge-key="9" data-edge-id="record">
-          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="record" data-composition-points="305.1,417;459.7,417" d="M 305.1 417 L 459.7 417" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-edge-from="console" data-edge-to="api" data-edge-label="poll job status" data-edge-key="9" data-edge-id="poll">
+          <path data-composition-edge-from="console" data-composition-edge-to="api" data-composition-edge-id="poll" data-composition-points="136.5,417;291.1,417" d="M 136.5 417 L 291.1 417" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="316.59999999999997" y="397" width="131.60000000000002" height="16" rx="3" class="c-mask"/>
-          <text x="382.4" y="407" class="t-backend" font-size="9" text-anchor="middle">record model, COMPLETED</text>
+          <rect x="168.8" y="397" width="90" height="16" rx="3" class="c-mask"/>
+          <text x="213.8" y="407" class="t-messagebus" font-size="9" text-anchor="middle">poll job status</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="console" data-edge-label="SSE training.status" data-edge-key="10" data-edge-id="notify">
-          <path data-composition-edge-from="api" data-composition-edge-to="console" data-composition-edge-id="notify" data-composition-points="291.1,445;136.5,445" d="M 291.1 445 L 136.5 445" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="api" data-edge-to="console" data-edge-label="COMPLETED" data-edge-key="10" data-edge-id="status">
+          <path data-composition-edge-from="api" data-composition-edge-to="console" data-composition-edge-id="status" data-composition-points="291.1,445;136.5,445" d="M 291.1 445 L 136.5 445" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="158.4" y="425" width="110.8" height="16" rx="3" class="c-mask"/>
-          <text x="213.8" y="435" class="t-messagebus" font-size="9" text-anchor="middle">SSE training.status</text>
-        </g>
-        </g>
-
-        <g data-edge-from="api" data-edge-to="pg" data-edge-label="auto job: SHADOW if idle" data-edge-key="11" data-edge-id="autoshadow">
-          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="autoshadow" data-composition-points="305.1,473;459.7,473" d="M 305.1 473 L 459.7 473" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
-        <g>
-          <rect x="314" y="453" width="136.8" height="16" rx="3" class="c-mask"/>
-          <text x="382.4" y="463" class="t-messagebus" font-size="9" text-anchor="middle">auto job: SHADOW if idle</text>
+          <rect x="184.4" y="425" width="58.800000000000004" height="16" rx="3" class="c-mask"/>
+          <text x="213.8" y="435" class="t-muted" font-size="9" text-anchor="middle">COMPLETED</text>
         </g>
         </g>
 
@@ -564,12 +558,12 @@ rect.c-bg-rect { fill: var(--bg); }
           <text x="62" y="141" class="t-dim" font-size="9" font-weight="600">Submit</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="1">
-          <rect x="56" y="216" width="42" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="229" class="t-dim" font-size="9" font-weight="600">Train</text>
+          <rect x="56" y="194" width="81.60000000000001" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="207" class="t-dim" font-size="9" font-weight="600">Worker trains</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="2">
-          <rect x="56" y="384" width="92" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="397" class="t-dim" font-size="9" font-weight="600">Record + notify</text>
+          <rect x="56" y="384" width="42" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="397" class="t-dim" font-size="9" font-weight="600">Poll</text>
         </g>
 
         <!-- Participants -->
@@ -615,15 +609,15 @@ rect.c-bg-rect { fill: var(--bg); }
           <text x="466.7" y="111" class="t-muted" font-size="7" text-anchor="middle">jobs, registry, audit</text>
         </g>
 
-        <g id="node-trainer" data-node-id="trainer" data-node-label="Trainer" tabindex="0" role="button" aria-label="Focus Trainer, worker thread, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="worker thread" data-node-context="Sequence participant">
-          <title>Trainer · worker thread · Sequence participant</title>
+        <g id="node-trainer" data-node-id="trainer" data-node-label="Worker" tabindex="0" role="button" aria-label="Focus Worker, python -m rec.worker, Sequence participant" aria-pressed="false" data-node-kind="backend" data-node-sublabel="python -m rec.worker" data-node-context="Sequence participant">
+          <title>Worker · python -m rec.worker · Sequence participant</title>
           <rect x="567.8" y="72" width="135" height="54" rx="6" class="c-mask"/>
           <rect x="567.8" y="72" width="135" height="54" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(573.8 78) scale(0.6875)">
             <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
           </g>
-          <text data-node-label="" x="635.3" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Trainer</text>
-          <text x="635.3" y="111" class="t-muted" font-size="7" text-anchor="middle">worker thread</text>
+          <text data-node-label="" x="635.3" y="94" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Worker</text>
+          <text x="635.3" y="111" class="t-muted" font-size="7" text-anchor="middle">python -m rec.worker</text>
         </g>
 
         <g id="node-data" data-node-id="data" data-node-label="data/ volume" tabindex="0" role="button" aria-label="Focus data/ volume, datasets, models, Sequence participant" aria-pressed="false" data-node-kind="database" data-node-sublabel="datasets, models" data-node-context="Sequence participant">

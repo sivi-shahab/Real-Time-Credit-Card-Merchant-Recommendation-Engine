@@ -96,3 +96,15 @@ tests:
         exp_alerts:
           - exp_labels: {severity: ticket, name: promo_holdout_percent, instance: "api:8000"}
             exp_annotations: {summary: "Learning setting promo_holdout_percent changed on api:8000", runbook: "docs/runbooks.md#learning-switches"}
+
+  - name: a failed scheduled uplift report raises a ticket
+    interval: 1m
+    input_series:
+      - series: 'uplift_reports_total{outcome="failed"}'
+        values: '0 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: UpliftReportFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations: {summary: "The scheduled uplift report failed", runbook: "docs/runbooks.md#uplift-report"}

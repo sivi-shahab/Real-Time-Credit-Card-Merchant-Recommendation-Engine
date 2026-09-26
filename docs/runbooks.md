@@ -54,7 +54,7 @@ and on `pipeline.dlq`. Fix the producer; do not hand-edit the log. Once fixed, r
 events with **the same eventId** only if they were never applied.
 
 ## auto-retrain
-`AutoRetrainFailing`: an automatic check or training job failed. The API log names the
+`AutoRetrainFailing`: an automatic check or training job failed. The worker log names the
 step (`auto_retrain`, `ml_jobs`); `GET /admin/v1/training-jobs` shows the job and its
 error. Common causes: the data volume is full (each run writes a `live-*` snapshot; retention
 keeps the newest `AUTO_RETRAIN_KEEP_EXPORTS` plus those in use, audited as
@@ -65,6 +65,21 @@ the current model stays until someone promotes another.
 SHADOW (actor `system:auto-retrain` in the audit log). An Approver reviews the shadow
 numbers on the Models page before any CANARY. To take it out of SHADOW, roll back.
 To stop the loop: request `auto_retrain_interval_hours = 0` (see learning-switches).
+
+## worker
+The worker (`python -m rec.worker`, service `worker`, ADR-0012) runs training jobs, the
+scheduled uplift report, auto-retrain and the online bandit. If it is down (`TargetDown`
+for job `worker`): serving is unaffected, but queued training jobs wait and nothing learns.
+Restart or scale it (`docker compose up -d --scale worker=2`); jobs are claimed with SKIP
+LOCKED and the other passes take Redis locks, so several workers are safe. A job left
+RUNNING past `TRAINING_TIMEOUT_HOURS` (6) is failed by the next worker turn with "no worker
+finished it within the training timeout"; submit it again.
+
+## uplift-report
+`UpliftReportFailing`: the worker's scheduled report (`UPLIFT_REPORT_INTERVAL_HOURS`, 24)
+raised; the worker log (`uplift`) has the traceback. A report skipped for lack of data
+(no holdout, fewer than 200 customers with a closed window) is counted as `insufficient`,
+not failed. Run it by hand with `python -m rec.ml.uplift` inside the worker container.
 
 ## online-bandit
 `BanditLearningFailing` or `BanditLearningStalled`: the online bandit (shadow only, never

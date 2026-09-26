@@ -91,8 +91,8 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 
 ```bash
 cp .env.example .env
-docker compose up -d --build   # kafka, postgres, redis, api, stream, ranking, mlflow,
-                               # dashboard, keycloak, prometheus
+docker compose up -d --build   # kafka, postgres, redis, api, stream, ranking, worker,
+                               # mlflow, dashboard, keycloak, prometheus
 ```
 
 | Surface   | URL                          | Notes                                |
@@ -254,6 +254,11 @@ click propensity per position and discounts by it. On the generator's data it re
 the known `1/log2(position+2)` curve within MAE 0.03; each model stores its curve as
 `artifacts.positionBias`.
 
+**Worker** ([ADR-0012](docs/adr/0012-background-worker.md)). The `worker` service runs
+queued training jobs (the API only queues them), the uplift report every
+`UPLIFT_REPORT_INTERVAL_HOURS` (24), auto-retrain and the online bandit, so none of it
+competes with serving. Scale it freely: jobs are claimed once and each pass is locked.
+
 **Learning settings** ([ADR-0011](docs/adr/0011-learning-settings-maker-checker.md)) change
 through a maker-checker on the dashboard's Pembelajaran page: an ML Engineer or Platform
 Operator files a change with a reason, an Approver decides, and it applies to every
@@ -293,10 +298,9 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
 - **Off-policy evaluation.** Serving is deterministic, so no logged propensities exist and
   doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
   a small randomised share of served slates, which changes what customers see.
-- **A scheduled uplift report.** The uplift report is produced by running
-  `python -m rec.ml.uplift` by hand.
-- **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
-  the API process; a large `tuneTrials` competes with serving on that replica.
+- **Dataset generation off the API.** Training, tuning, the uplift report and the learning
+  loops run in the worker ([ADR-0012](docs/adr/0012-background-worker.md)), but
+  generating a synthetic dataset still runs in the API process.
 
 ## Known gaps to close before customer traffic
 

@@ -242,6 +242,20 @@
           "path": "rec/ml/registry.py"
         }
       ]
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "training + learning",
+      "pos": [
+        1080,
+        220
+      ],
+      "size": [
+        150,
+        64
+      ]
     }
   ],
   "connections": [
@@ -312,23 +326,18 @@
       "label": "load"
     },
     {
+      "id": "claim",
+      "from": "worker",
+      "to": "postgres",
+      "label": "jobs"
+    },
+    {
       "id": "train",
-      "from": "api",
+      "from": "worker",
       "to": "models",
-      "label": "train, auto",
+      "label": "train",
       "variant": "dashed",
-      "fromSide": "bottom",
-      "toSide": "bottom",
-      "via": [
-        [
-          635,
-          480
-        ],
-        [
-          1155,
-          480
-        ]
-      ]
+      "labelDy": 24
     }
   ],
   "cards": [
@@ -345,7 +354,7 @@
       "title": "Serving",
       "items": [
         "Debiased XGBoost LTR, shadow/canary, promo holdout",
-        "Guardrail rollback; online bandit scores in shadow"
+        "Worker trains and learns off the serving path"
       ]
     },
     {

@@ -61,3 +61,7 @@ groups:
         expr: changes(learning_switch[15m]) > 0
         labels: {severity: ticket}
         annotations: {summary: "Learning setting {{ $labels.name }} changed on {{ $labels.instance }}", runbook: "docs/runbooks.md#learning-switches"}
+      - alert: UpliftReportFailing
+        expr: sum(increase(uplift_reports_total{outcome="failed"}[1d])) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "The scheduled uplift report failed", runbook: "docs/runbooks.md#uplift-report"}

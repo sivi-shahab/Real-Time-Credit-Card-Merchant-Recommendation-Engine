@@ -90,7 +90,8 @@ and one consumer per partition (6), and a real Kafka load generator.
 | Runbooks | PASS | `docs/runbooks.md` |
 | Alert routing (pager), on-call rota, dashboards in the ops tool | OPEN | organisational |
 | Learning loops observable (auto-retrain runs, bandit learning, holdout exposure) | PASS | metrics for each loop, asserted in the e2e tests that drive them; alerts for failures, stalls, automatic SHADOW, holdout sample-ratio mismatch and setting changes, each with a unit test and a runbook section; state on the Pembelajaran page |
-| Training isolated from serving (D-7) | OPEN | training and Optuna tuning run in a thread of the API process |
+| Training isolated from serving (D-7) | PASS | worker process (ADR-0012): `test_training_is_queued_for_a_worker_and_claimed_once`; live: a job submitted to the API ran and was counted only in the worker. Dataset generation still runs in the API |
+| Scheduled uplift report | PASS | worker, every 24 h, locked and alerted (`UpliftReportFailing`): `test_scheduled_uplift_report_saves_what_it_estimates`, `test_scheduled_uplift_report_is_locked_and_skips_without_data` |
 
 ## Sign-off
 

@@ -1,10 +1,16 @@
-"""Training job runner (ML-005 step 10-11). Long job -> 202 + jobId, per §12.1."""
+"""Training jobs (ML-005 step 10-11). Long job -> 202 + jobId, per §12.1.
+
+The API only queues a job. The worker process (`python -m rec.worker`, ADR-0012) claims it
+with `FOR UPDATE SKIP LOCKED` and trains, so training and Optuna never compete with
+serving on an API replica (threat D-7), and several workers never take the same job.
+"""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 from rec.api.jobs import publish
@@ -37,15 +43,50 @@ async def create_training_job(dataset_id: str, params: dict | None = None,
         """INSERT INTO training_jobs (job_id, dataset_id, status, params, idempotency_key)
            VALUES ($1,$2,'QUEUED',$3,$4)""",
         job_id, dataset_id, json.dumps(params or {}), idempotency_key)
-    asyncio.create_task(_run(job_id, dataset_id, params or {}))
     return job_id
+
+
+async def claim_next() -> dict | None:
+    """Take the oldest queued job; a concurrent worker skips it rather than waits."""
+    conn = await pg.pool()
+    row = await conn.fetchrow(
+        """UPDATE training_jobs SET status = 'RUNNING', updated_at = now()
+           WHERE job_id = (SELECT job_id FROM training_jobs WHERE status = 'QUEUED'
+                           ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+           RETURNING job_id, dataset_id, params""")
+    return dict(row) | {"params": json.loads(row["params"])} if row else None
+
+
+async def fail_stale() -> list[str]:
+    """A job RUNNING past the timeout lost its worker (crash, redeploy): fail it so it is
+    visible and can be re-queued, instead of RUNNING forever."""
+    # ponytail: timeout, not a heartbeat; a training run longer than it is failed wrongly.
+    conn = await pg.pool()
+    rows = await conn.fetch(
+        """UPDATE training_jobs SET status = 'FAILED', updated_at = now(),
+             error = 'no worker finished it within the training timeout'
+           WHERE status = 'RUNNING' AND updated_at < now() - $1::interval
+           RETURNING job_id, params""",
+        timedelta(hours=settings.training_timeout_hours))
+    for row in rows:
+        TRAINING_JOBS.labels(json.loads(row["params"]).get("trigger", "manual"), "FAILED").inc()
+    return [r["job_id"] for r in rows]
+
+
+async def work_once() -> str | None:
+    """One worker turn: clear lost jobs, then run the next queued one, if any."""
+    await fail_stale()
+    job = await claim_next()
+    if job is None:
+        return None
+    await _run(job["job_id"], job["dataset_id"], job["params"])
+    return job["job_id"]
 
 
 async def _run(job_id: str, dataset_id: str, params: dict) -> None:
     conn = await pg.pool()
     try:
-        await conn.execute("UPDATE training_jobs SET status='RUNNING', updated_at=now() "
-                           "WHERE job_id=$1", job_id)
+        # SSE events reach only this process's clients; the dashboard also polls jobs.
         await publish({"type": "training.status", "jobId": job_id, "status": "RUNNING"})
         result = await asyncio.to_thread(
             train,

@@ -14,5 +14,11 @@ export default defineConfig({
       '/bff': { target: 'http://localhost:8000', changeOrigin: true },
     },
   },
+  build: {
+    // ponytail: echarts (core + bar/grid/tooltip, already imported piecemeal) is one ~500 kB
+    // chunk that only chart pages load and that cannot split further. The limit sits just
+    // above it so any other chunk that grows still warns; lazy-mount charts if it matters.
+    chunkSizeWarningLimit: 560,
+  },
   test: { environment: 'jsdom', globals: true },
 })

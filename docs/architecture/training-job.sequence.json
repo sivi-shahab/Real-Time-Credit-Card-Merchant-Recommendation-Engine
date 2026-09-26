@@ -25,23 +25,23 @@
         "id": "train",
         "label": "Train",
         "focus": [
-          "api",
+          "pg",
           "trainer",
           "data",
           "mlflow"
         ],
-        "note": "A worker thread builds the dataset, trains, evaluates gates and logs to MLflow."
+        "note": "A worker claims the job, trains, logs to MLflow and records the model and its gates."
       },
       {
         "id": "record",
-        "label": "Record + notify",
+        "label": "Record + poll",
         "focus": [
           "trainer",
-          "api",
           "pg",
+          "api",
           "console"
         ],
-        "note": "The model and its gates land in the registry; the console hears it over SSE."
+        "note": "The model and its gates land in the registry; the console polls the job."
       }
     ],
     "legend": {
@@ -84,8 +84,8 @@
     {
       "id": "trainer",
       "type": "backend",
-      "label": "Trainer",
-      "sublabel": "worker thread"
+      "label": "Worker",
+      "sublabel": "python -m rec.worker"
     },
     {
       "id": "data",
@@ -105,97 +105,89 @@
       "id": "submit",
       "from": "console",
       "to": "api",
-      "y": 165,
       "label": "POST /training-jobs",
-      "variant": "emphasis"
+      "variant": "emphasis",
+      "y": 165
     },
     {
       "id": "queue",
       "from": "api",
       "to": "pg",
-      "y": 193,
       "label": "job QUEUED + audit",
-      "variant": "default"
+      "variant": "default",
+      "y": 193
     },
     {
       "id": "accepted",
       "from": "api",
       "to": "console",
-      "y": 221,
       "label": "202 jobId",
-      "variant": "return"
+      "variant": "return",
+      "y": 221
     },
     {
-      "id": "running",
-      "from": "api",
+      "id": "claim",
+      "from": "trainer",
       "to": "pg",
-      "y": 249,
-      "label": "RUNNING, erased ids",
-      "variant": "default"
-    },
-    {
-      "id": "start",
-      "from": "api",
-      "to": "trainer",
-      "y": 277,
-      "label": "train(tuneTrials)",
-      "variant": "dashed"
+      "label": "claim (SKIP LOCKED)",
+      "variant": "emphasis",
+      "y": 249
     },
     {
       "id": "read",
       "from": "trainer",
       "to": "data",
-      "y": 305,
       "label": "read dataset",
-      "variant": "default"
+      "variant": "default",
+      "y": 277
     },
     {
       "id": "save",
       "from": "trainer",
       "to": "data",
-      "y": 333,
       "label": "save model + metadata",
-      "variant": "default"
+      "variant": "default",
+      "y": 305
     },
     {
       "id": "log",
       "from": "trainer",
       "to": "mlflow",
-      "y": 361,
       "label": "log run + tuning",
-      "variant": "default"
-    },
-    {
-      "id": "result",
-      "from": "trainer",
-      "to": "api",
-      "y": 389,
-      "label": "result + gates",
-      "variant": "return"
+      "variant": "default",
+      "y": 333
     },
     {
       "id": "record",
-      "from": "api",
+      "from": "trainer",
       "to": "pg",
-      "y": 417,
       "label": "record model, COMPLETED",
-      "variant": "emphasis"
-    },
-    {
-      "id": "notify",
-      "from": "api",
-      "to": "console",
-      "y": 445,
-      "label": "SSE training.status",
-      "variant": "dashed"
+      "variant": "emphasis",
+      "y": 361
     },
     {
       "id": "autoshadow",
-      "from": "api",
+      "from": "trainer",
       "to": "pg",
-      "y": 473,
       "label": "auto job: SHADOW if idle",
-      "variant": "dashed"
+      "variant": "dashed",
+      "y": 389
+    },
+    {
+      "id": "poll",
+      "from": "console",
+      "to": "api",
+      "label": "poll job status",
+      "variant": "dashed",
+      "y": 417
+    },
+    {
+      "id": "status",
+      "from": "api",
+      "to": "console",
+      "label": "COMPLETED",
+      "variant": "return",
+      "y": 445
     }
   ],
   "segments": [
@@ -207,25 +199,31 @@
     {
       "from": 238,
       "to": 400,
-      "label": "Train"
+      "label": "Worker trains"
     },
     {
       "from": 406,
-      "to": 484,
-      "label": "Record + notify"
+      "to": 456,
+      "label": "Poll"
     }
   ],
   "activations": [
     {
       "participant": "api",
       "from": 165,
-      "to": 479,
+      "to": 227,
       "type": "backend"
     },
     {
       "participant": "trainer",
-      "from": 277,
+      "from": 244,
       "to": 395,
+      "type": "backend"
+    },
+    {
+      "participant": "api",
+      "from": 417,
+      "to": 451,
       "type": "backend"
     }
   ],
@@ -234,7 +232,7 @@
       "dot": "cyan",
       "title": "Submit",
       "items": [
-        "Needs training:run; Approvers cannot train",
+        "Needs training:run; the API only queues (ADR-0012)",
         "Auto-retrain queues the same job on a live export"
       ]
     },
@@ -242,8 +240,8 @@
       "dot": "emerald",
       "title": "Train",
       "items": [
-        "Validation slice for early stopping and Optuna",
-        "Test side only grades the gates"
+        "Claimed once (SKIP LOCKED); lost jobs fail after 6 h",
+        "Validation slice for early stopping and Optuna"
       ]
     },
     {

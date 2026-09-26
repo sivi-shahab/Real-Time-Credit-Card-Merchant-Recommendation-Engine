@@ -92,7 +92,7 @@ fraud detection.
 | D-4 | Poison event stalls the consumer | B3 | Per-event isolation, quarantine + DLQ, consumer keeps going | `test_pipeline_applies_and_quarantines_per_spec`, `scripts/chaos.sh` | Mitigated |
 | D-5 | Ranking service memory exhausted by warming many versions | B5 | Unauthenticated `warm` endpoint, unbounded booster cache. Network policy so only the API can call it; bound the cache | — | Open |
 | D-6 | Simulator used to flood production | B3 | Disabled outside local/staging (SIM-003), capped TPS, Platform Operator only | `test_simulator_*` | Mitigated |
-| D-7 | Training starves serving: a large `tuneTrials`, or auto-retrain, runs in a thread of the API process | B5 | `tuneTrials` ≤ 200 and ML Engineer only; one replica runs auto-retrain (Redis lock) and only past a threshold. Still shares the replica's CPU: needs a separate training worker | — | Partial |
+| D-7 | Training starves serving: a large `tuneTrials`, or auto-retrain, competes with the API for CPU | B5 | Training, tuning, auto-retrain, the bandit and the uplift report run in the worker process (ADR-0012); the API only queues a job. `tuneTrials` ≤ 200 and ML Engineer only. Dataset generation still runs in the API | `test_training_is_queued_for_a_worker_and_claimed_once`, `test_a_job_its_worker_lost_is_failed_not_left_running` | Mitigated |
 | D-8 | Bandit contexts grow Redis memory with traffic | B4 | One small hash per served request, 8-day TTL; off by default. Needs capacity planning and a `maxmemory` policy before enabling at volume | — | Partial |
 
 ## Elevation of privilege

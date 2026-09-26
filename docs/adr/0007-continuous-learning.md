@@ -11,7 +11,8 @@ serve, and only an Approver may put one in front of customers.
 ## Decision
 Continuous learning is staged.
 
-1. **Stage 1 — automatic retrain (built).** `rec/api/auto_retrain.py` runs every
+1. **Stage 1 — automatic retrain (built).** `rec/api/auto_retrain.py`, in the worker
+   process since ADR-0012, runs every
    `AUTO_RETRAIN_INTERVAL_HOURS` (0 = off, the default). When at least
    `AUTO_RETRAIN_MIN_NEW_IMPRESSIONS` impressions became observable since the last automatic
    job, it exports Postgres into a `live-*` dataset dir (`rec/ml/live_dataset.py`) and

@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from rec.api import auto_retrain, bff, jobs, learning_settings, ml_jobs, service
+from rec.api import bff, jobs, learning_settings, ml_jobs, service
 from rec.api.auth import Principal, customer_self, principal, require
 from rec.core.models import (
     FEATURE_SCHEMA_VERSION,
@@ -67,11 +67,9 @@ async def lifespan(app: FastAPI):
     await pg.pool()
     await learning_settings.refresh(force=True)  # approved values win over env (ADR-0011)
     await record_learning_config()
-    # The learning loops always run and check their switch each turn, so an approved
-    # change takes effect without a restart.
+    # Serving-side only: the learning loops and training run in the worker (ADR-0012).
     watchers = [asyncio.create_task(task) for task in (
-        guardrail.loop(store), auto_retrain.loop(store), bandit.loop(store),
-        learning_settings.loop())]
+        guardrail.loop(store), learning_settings.loop())]
     yield
     for watcher in watchers:
         watcher.cancel()

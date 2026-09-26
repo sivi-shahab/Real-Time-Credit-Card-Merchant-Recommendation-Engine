@@ -23,7 +23,8 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from rec.obs import PROMO_ASSIGNMENTS
+from rec.obs import PROMO_ASSIGNMENTS, UPLIFT_REPORTS
+from rec.settings import settings
 from rec.store import pg
 
 log = logging.getLogger("uplift")
@@ -129,7 +130,7 @@ def fit(frame: pd.DataFrame, *, seed: int = 42, test_share: float = 0.3,
     from causalml.metrics import qini_score
     from xgboost import XGBClassifier, XGBRegressor
 
-    if frame["treatment"].nunique() < 2 or len(frame) < 200:
+    if frame.empty or frame["treatment"].nunique() < 2 or len(frame) < 200:
         raise ValueError("need both arms and at least 200 customers with a closed window")
     rng = np.random.default_rng(seed)
     held_out = rng.random(len(frame)) < test_share
@@ -170,6 +171,29 @@ async def latest_report() -> dict | None:
     row = await conn.fetchrow(
         "SELECT created_at, report FROM uplift_reports ORDER BY id DESC LIMIT 1")
     return {"createdAt": row["created_at"], **json.loads(row["report"])} if row else None
+
+
+REPORT_LOCK = "uplift:report:lock"
+
+
+async def scheduled_report(store) -> str:
+    """One scheduled run (ADR-0012). Returns the outcome it counted: `saved`,
+    `insufficient` (no holdout yet, or too few customers), `locked` or `failed`."""
+    ttl = max(60, int(settings.uplift_report_interval_hours * 3600))
+    if not await store.r.set(REPORT_LOCK, "1", nx=True, ex=ttl):
+        outcome = "locked"  # another worker has this interval
+    else:
+        try:
+            await save_report(fit(await load_frame()))
+            outcome = "saved"
+        except ValueError as exc:
+            log.info("uplift report skipped: %s", exc)
+            outcome = "insufficient"
+        except Exception:  # noqa: BLE001 - counted and alerted, never kills the worker
+            log.exception("uplift report failed")
+            outcome = "failed"
+    UPLIFT_REPORTS.labels(outcome).inc()
+    return outcome
 
 
 def main() -> None:

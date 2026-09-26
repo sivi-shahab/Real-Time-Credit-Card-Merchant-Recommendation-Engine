@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     online_bandit_enabled: bool = False
     online_bandit_exploration: float = 1.0
     online_bandit_learn_interval_seconds: int = 300
+    # Worker process (ADR-0012): training queue, scheduled uplift report, learning loops.
+    training_poll_seconds: float = 5.0
+    training_timeout_hours: float = 6.0
+    uplift_report_interval_hours: float = 24.0  # 0 disables the scheduled report
+    worker_metrics_port: int = 9103
     # Promo uplift experiment (ADR-0010): share of customers served without promo offers.
     # 0 = off. Keep it fixed while an experiment runs; 100 would leave no treatment arm.
     promo_holdout_percent: int = Field(0, ge=0, le=99)

@@ -5169,7 +5169,8 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <path data-edge-from="api" data-edge-to="keycloak" data-edge-label="OIDC" data-edge-key="7" data-edge-id="sso" data-composition-points="560,405;505,405;505,252;450,252" d="M 560 405 L 513 405 Q 505 405 505 397 L 505 260 Q 505 252 497 252 L 450 252" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="api" data-edge-to="ranking" data-edge-label="POST /score" data-edge-key="8" data-edge-id="score" data-composition-points="710,419;820,419" d="M 710 419 L 820 419" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="ranking" data-edge-to="models" data-edge-label="load" data-edge-key="9" data-edge-id="load-model" data-composition-points="970,412;1080,412" d="M 970 412 L 1080 412" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="api" data-edge-to="models" data-edge-label="train, auto" data-edge-key="10" data-edge-id="train" data-composition-points="635,444;635,480;1155,480;1155,444" d="M 635 444 L 635 472 Q 635 480 643 480 L 1147 480 Q 1155 480 1155 472 L 1155 444" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="worker" data-edge-to="postgres" data-edge-label="jobs" data-edge-key="10" data-edge-id="claim" data-composition-points="1080,252;970,252" d="M 1080 252 L 970 252" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path data-edge-from="worker" data-edge-to="models" data-edge-label="train" data-edge-key="11" data-edge-id="train" data-composition-points="1155,284;1155,380" d="M 1155 284 L 1155 380" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-simulator" data-node-id="simulator" data-node-label="Replay Simulator" tabindex="0" role="button" aria-label="Focus Replay Simulator, rec.simulator, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="rec.simulator" data-node-context="Architecture component">
@@ -5309,6 +5310,17 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         <text data-detail="context" x="1155" y="426" class="t-muted" font-size="9" text-anchor="middle">MLflow + data/models</text>
         </g>
 
+        <g id="node-worker" data-node-id="worker" data-node-label="Worker" tabindex="0" role="button" aria-label="Focus Worker, training + learning, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="training + learning" data-node-context="Architecture component">
+          <title>Worker · training + learning · Architecture component</title>
+          <rect x="1080" y="220" width="150" height="64" rx="6" class="c-mask"/>
+          <rect x="1080" y="220" width="150" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
+          <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(1086 226) scale(0.6875)">
+            <path d="M6 3 3 8l3 5M10 3l3 5-3 5"/>
+          </g>
+          <text data-node-label="" data-detail-anchor="" x="1155" y="250" class="t-primary" font-size="11" font-weight="600" text-anchor="middle">Worker</text>
+        <text data-detail="context" x="1155" y="266" class="t-muted" font-size="9" text-anchor="middle">training + learning</text>
+        </g>
+
         <!-- Connection labels -->
         <g data-detail="context" data-edge-from="simulator" data-edge-to="kafka" data-edge-label="cc.transactions" data-edge-key="0" data-edge-id="replay">
           <rect x="204" y="72" width="82" height="14" rx="3" class="c-mask"/>
@@ -5350,9 +5362,13 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
           <rect x="1010" y="392" width="30" height="14" rx="3" class="c-mask"/>
           <text x="1025" y="402" class="t-muted" font-size="8" text-anchor="middle">load</text>
         </g>
-        <g data-detail="context" data-edge-from="api" data-edge-to="models" data-edge-label="train, auto" data-edge-key="10" data-edge-id="train">
-          <rect x="863.6" y="460" width="62.8" height="14" rx="3" class="c-mask"/>
-          <text x="895" y="470" class="t-messagebus" font-size="8" text-anchor="middle">train, auto</text>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="postgres" data-edge-label="jobs" data-edge-key="10" data-edge-id="claim">
+          <rect x="1010" y="232" width="30" height="14" rx="3" class="c-mask"/>
+          <text x="1025" y="242" class="t-muted" font-size="8" text-anchor="middle">jobs</text>
+        </g>
+        <g data-detail="context" data-edge-from="worker" data-edge-to="models" data-edge-label="train" data-edge-key="11" data-edge-id="train">
+          <rect x="1138" y="288" width="34" height="14" rx="3" class="c-mask"/>
+          <text x="1155" y="298" class="t-messagebus" font-size="8" text-anchor="middle">train</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
@@ -5590,7 +5606,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
         </div>
         <ul>
           <li>&bull; Debiased XGBoost LTR, shadow/canary, promo holdout</li>
-          <li>&bull; Guardrail rollback; online bandit scores in shadow</li>
+          <li>&bull; Worker trains and learns off the serving path</li>
         </ul>
       </div>
 

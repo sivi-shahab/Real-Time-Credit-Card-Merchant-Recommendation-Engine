@@ -93,5 +93,7 @@ BANDIT_LEARNED_UNTIL = Gauge("bandit_learned_until_timestamp_seconds",
                              "Impressions up to this time are learned (watermark)")
 BANDIT_SHADOW = Counter("bandit_shadow_evaluations_total",
                         "Online bandit orderings recorded beside live requests", ["outcome"])
+UPLIFT_REPORTS = Counter("uplift_reports_total", "Scheduled uplift report runs",
+                         ["outcome"])  # saved | insufficient | locked | failed
 PROMO_ASSIGNMENTS = Counter("promo_holdout_assignments_total",
                             "Customers newly assigned to a promo-holdout arm", ["arm"])

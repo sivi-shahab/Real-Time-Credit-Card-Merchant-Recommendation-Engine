@@ -3,7 +3,9 @@ WORKDIR /app
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml ./
 COPY rec ./rec
-RUN uv pip install --system --no-cache .
+# the worker image adds `[causal]` for the scheduled uplift report (docker-compose.yml)
+ARG EXTRAS=""
+RUN uv pip install --system --no-cache ".${EXTRAS}"
 COPY db ./db
 COPY scripts ./scripts
 ENV PYTHONUNBUFFERED=1 \

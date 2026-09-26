@@ -1100,6 +1100,102 @@ async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
     assert missing.status_code == 404
 
 
+async def test_training_is_queued_for_a_worker_and_claimed_once(client, replayed):
+    """ADR-0012 / D-7: the API only queues; a worker claims the job, and a second worker
+    finds nothing to take."""
+    from rec.api import ml_jobs
+
+    conn = await pg.pool()
+    await conn.execute("UPDATE training_jobs SET status = 'FAILED' WHERE status = 'QUEUED'")
+    queued = await client.post("/admin/v1/training-jobs", headers=ML,
+                               json={"datasetId": "test-dataset", "numRounds": 10})
+    job_id = queued.json()["jobId"]
+    try:
+        await asyncio.sleep(0.3)
+        assert await conn.fetchval("SELECT status FROM training_jobs WHERE job_id = $1",
+                                   job_id) == "QUEUED"   # nothing trains on the API
+        first, second = await asyncio.gather(ml_jobs.claim_next(), ml_jobs.claim_next())
+        claimed = [job for job in (first, second) if job]
+        assert [job["job_id"] for job in claimed] == [job_id]
+        assert claimed[0]["params"]["numRounds"] == 10
+        assert await conn.fetchval("SELECT status FROM training_jobs WHERE job_id = $1",
+                                   job_id) == "RUNNING"
+        assert await ml_jobs.claim_next() is None
+    finally:
+        await conn.execute("DELETE FROM training_jobs WHERE job_id = $1", job_id)
+
+
+async def test_a_job_its_worker_lost_is_failed_not_left_running(replayed):
+    from rec.api import ml_jobs
+
+    conn = await pg.pool()
+    await conn.execute(
+        """INSERT INTO training_jobs (job_id, dataset_id, status, params, updated_at)
+           VALUES ('job-lost', 'test-dataset', 'RUNNING', '{"trigger": "auto"}',
+                   now() - interval '7 hours'),
+                  ('job-busy', 'test-dataset', 'RUNNING', '{}', now())""")
+    failed = _metric("training_jobs_total", trigger="auto", status="FAILED")
+    try:
+        assert await ml_jobs.fail_stale() == ["job-lost"]
+        row = await conn.fetchrow(
+            "SELECT status, error FROM training_jobs WHERE job_id = 'job-lost'")
+        assert row["status"] == "FAILED" and "training timeout" in row["error"]
+        assert await conn.fetchval(
+            "SELECT status FROM training_jobs WHERE job_id = 'job-busy'") == "RUNNING"
+        assert _metric("training_jobs_total", trigger="auto", status="FAILED") == failed + 1
+    finally:
+        await conn.execute("DELETE FROM training_jobs WHERE job_id IN ('job-lost', 'job-busy')")
+
+
+async def test_scheduled_uplift_report_is_locked_and_skips_without_data(replayed, monkeypatch):
+    from rec.ml import uplift
+
+    await store.r.delete(uplift.REPORT_LOCK)
+    monkeypatch.setattr(uplift, "load_frame", _empty_uplift_frame)
+    counts = {o: _metric("uplift_reports_total", outcome=o) for o in ("insufficient", "locked")}
+    try:
+        assert await uplift.scheduled_report(store) == "insufficient"
+        assert await uplift.scheduled_report(store) == "locked"    # one run per interval
+        assert {o: _metric("uplift_reports_total", outcome=o) - c
+                for o, c in counts.items()} == {"insufficient": 1, "locked": 1}
+    finally:
+        await store.r.delete(uplift.REPORT_LOCK)
+
+
+async def _empty_uplift_frame(now=None):
+    import pandas as pd
+    return pd.DataFrame()
+
+
+async def test_scheduled_uplift_report_saves_what_it_estimates(replayed, monkeypatch):
+    pytest.importorskip("causalml")
+    import numpy as np
+    import pandas as pd
+
+    from rec.ml import uplift
+
+    rng = np.random.default_rng(0)
+    n = 1500
+    frame = pd.DataFrame({name: rng.random(n) for name in uplift.FEATURES})
+    frame["treatment"] = (rng.random(n) < 0.8).astype(int)
+    frame["propensity"] = 0.8
+    effect = np.where(frame["promo_purchase_share"] > 0.5, 0.3, 0.0)
+    frame["converted"] = (rng.random(n) < 0.2 + effect * frame["treatment"]).astype(int)
+
+    async def planted(now=None):
+        return frame
+
+    await store.r.delete(uplift.REPORT_LOCK)
+    monkeypatch.setattr(uplift, "load_frame", planted)
+    conn = await pg.pool()
+    try:
+        assert await uplift.scheduled_report(store) == "saved"
+        assert (await uplift.latest_report())["customers"] == n
+    finally:
+        await store.r.delete(uplift.REPORT_LOCK)
+        await conn.execute("DELETE FROM uplift_reports")
+
+
 async def test_model_endpoints_are_audited(client, replayed, baseline_deployment, monkeypatch):
     await _no_warm(monkeypatch)
     await _register_fake_model("m-audited")
