@@ -156,6 +156,18 @@ def fit(frame: pd.DataFrame, *, seed: int = 42, test_share: float = 0.3,
     }
 
 
+async def save_report(report: dict) -> None:
+    conn = await pg.pool()
+    await conn.execute("INSERT INTO uplift_reports (report) VALUES ($1)", json.dumps(report))
+
+
+async def latest_report() -> dict | None:
+    conn = await pg.pool()
+    row = await conn.fetchrow(
+        "SELECT created_at, report FROM uplift_reports ORDER BY id DESC LIMIT 1")
+    return {"createdAt": row["created_at"], **json.loads(row["report"])} if row else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Estimate promo uplift from the holdout.")
     parser.add_argument("--now", type=datetime.fromisoformat, default=None)
@@ -163,7 +175,9 @@ def main() -> None:
 
     async def run() -> dict:
         try:
-            return fit(await load_frame(args.now))
+            report = fit(await load_frame(args.now))
+            await save_report(report)  # the dashboard shows the latest one
+            return report
         finally:
             await pg.close()
 

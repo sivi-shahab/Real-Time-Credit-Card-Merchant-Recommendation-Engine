@@ -26,14 +26,16 @@ async def record_model(result: dict, *, dataset_id: str, job_id: str | None) -> 
     await conn.execute(
         """INSERT INTO models (model_version, dataset_id, job_id, feature_schema_version,
              trainer_version, artifact_path, mlflow_run_id, approved, metrics,
-             baseline_metrics, segment_metrics, gates, lineage)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             baseline_metrics, segment_metrics, gates, lineage, artifacts)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            ON CONFLICT (model_version) DO NOTHING""",
         result["modelVersion"], dataset_id, job_id, result["featureSchemaVersion"],
         result["trainerVersion"], result["artifacts"]["model"], result.get("mlflowRunId"),
         bool(result["approved"]), json.dumps(result["metrics"]),
         json.dumps(result["baselineMetrics"]), json.dumps(result["segmentMetrics"], default=str),
-        json.dumps(result["gates"]), json.dumps(result["datasetLineage"], default=str))
+        json.dumps(result["gates"]), json.dumps(result["datasetLineage"], default=str),
+        json.dumps({k: result["artifacts"].get(k)  # the small ones; the model is a file
+                    for k in ("featureImportanceGain", "positionBias")}))
 
 
 async def list_models(limit: int = 50) -> list[dict]:
@@ -52,7 +54,8 @@ async def get_model(model_version: str) -> dict | None:
 
 
 def _decode(row: dict) -> dict:
-    for key in ("metrics", "baseline_metrics", "segment_metrics", "gates", "lineage"):
+    for key in ("metrics", "baseline_metrics", "segment_metrics", "gates", "lineage",
+                "artifacts"):
         if isinstance(row.get(key), str):
             row[key] = json.loads(row[key])
     return row

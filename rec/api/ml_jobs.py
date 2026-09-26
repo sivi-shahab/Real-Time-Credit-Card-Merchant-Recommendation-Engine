@@ -100,7 +100,9 @@ async def list_jobs(limit: int = 25) -> list[dict]:
     rows = await conn.fetch(
         """SELECT job_id, dataset_id, status, error, created_at, updated_at,
                   result->>'modelVersion' AS model_version,
-                  (result->>'approved')::boolean AS approved
+                  (result->>'approved')::boolean AS approved,
+                  coalesce(params->>'trigger', 'manual') AS trigger,
+                  coalesce((params->>'tuneTrials')::int, 0) AS tune_trials
            FROM training_jobs ORDER BY created_at DESC LIMIT $1""", limit)
     return [dict(r) for r in rows]
 

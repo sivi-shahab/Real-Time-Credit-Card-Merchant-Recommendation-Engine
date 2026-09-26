@@ -288,10 +288,11 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
 - **Off-policy evaluation.** Serving is deterministic, so no logged propensities exist and
   doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
   a small randomised share of served slates, which changes what customers see.
-- **Operator surfaces for the learning features.** Tuning, position-bias curves, the
-  bandit's shadow numbers, the promo holdout and the uplift report are reachable through
-  the API, env vars and CLIs only: the dashboard shows none of them, the uplift report is
-  not persisted, and the new loops log but export no Prometheus metrics or alerts.
+- **Metrics, alerts and controls for the learning loops.** The dashboard shows their
+  state (Pembelajaran page, `/admin/v1/learning/status`) and each model's tuning and
+  position-bias curve, but the loops export no Prometheus metrics or alerts, their
+  settings are env vars rather than audited controls, and the uplift report is produced
+  by running `python -m rec.ml.uplift` by hand.
 - **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
   the API process; a large `tuneTrials` competes with serving on that replica.
 

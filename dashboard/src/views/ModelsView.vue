@@ -25,6 +25,7 @@ const qc = useQueryClient()
 const selected = ref<string | null>(null)
 const trainDataset = ref<string | null>(null)
 const numRounds = ref(300)
+const tuneTrials = ref(0)
 const promoteMode = ref<'SHADOW' | 'CANARY' | 'FULL'>('SHADOW')
 const canaryPercent = ref(10)
 
@@ -59,7 +60,8 @@ const deployment = computed(() => models.data.value?.deployment ?? {})
 
 const startTraining = useMutation({
   mutationFn: () => post<any>('/admin/v1/training-jobs',
-    { datasetId: trainDataset.value, numRounds: numRounds.value }),
+    { datasetId: trainDataset.value, numRounds: numRounds.value,
+      tuneTrials: tuneTrials.value }),
   onSuccess: (r) => {
     toast.add({ severity: 'success', summary: 'Training dimulai', detail: r.jobId, life: 4000 })
     qc.invalidateQueries({ queryKey: ['training-jobs'] })
@@ -123,12 +125,19 @@ const segmentChart = computed(() => {
     .map(([k, v]: any) => [k, Number((v['ndcg@10'] ?? 0).toFixed(4))]))
 })
 const importanceChart = computed<Record<string, number>>(() => {
-  const gain = detail.data.value?.lineage?.featureImportanceGain as
+  const gain = detail.data.value?.artifacts?.featureImportanceGain as
     Record<string, number> | undefined
   if (!gain) return {}
   return Object.fromEntries(
     Object.entries(gain).slice(0, 12).map(([k, v]) => [k, Number(Number(v).toFixed(2))]))
 })
+/** ADR-0008: estimated click propensity by display position, relative to the top slot. */
+const positionBiasChart = computed<Record<string, number>>(() => {
+  const clicked = detail.data.value?.artifacts?.positionBias?.clicked as number[] | undefined
+  if (!clicked) return {}
+  return Object.fromEntries(clicked.map((v, i) => [`posisi ${i + 1}`, Number(v.toFixed(3))]))
+})
+const tuning = computed(() => detail.data.value?.lineage?.tuning)
 </script>
 
 <template>
@@ -185,6 +194,9 @@ const importanceChart = computed<Record<string, number>>(() => {
                   placeholder="Pilih dataset selesai" style="min-width:260px" />
         </label>
         <label class="field">Boosting rounds<InputNumber v-model="numRounds" :min="10" :max="5000" /></label>
+        <label class="field">
+          Trial Optuna<InputNumber v-model="tuneTrials" :min="0" :max="200" />
+        </label>
         <Button label="Latih model"
                 :disabled="!trainDataset || !session.can('training:run') || startTraining.isPending.value"
                 :loading="startTraining.isPending.value" @click="startTraining.mutate()" />
@@ -192,17 +204,30 @@ const importanceChart = computed<Record<string, number>>(() => {
       <p v-if="!session.can('training:run')" class="state" style="text-align:left;padding:8px 0">
         Hanya peran ML Engineer yang dapat menjalankan training.
       </p>
+      <p class="state" style="text-align:left;padding:4px 0 12px">
+        Trial Optuna &gt; 0 menala hyperparameter pada potongan validasi dari periode training;
+        data uji hanya dipakai gerbang (ADR-0009).
+      </p>
     </div>
 
     <div class="panel">
       <h3>Training job</h3>
       <StatePanel :loading="jobs.isPending.value" :error="jobs.error.value"
                   :empty="!jobs.data.value?.length" empty-text="Belum ada training job.">
+        <div style="overflow-x:auto">
         <table class="plain">
-          <thead><tr><th>Job</th><th>Dataset</th><th>Status</th><th>Model</th><th>Gerbang</th></tr></thead>
+          <thead>
+            <tr><th>Job</th><th>Dataset</th><th>Status</th><th>Model</th><th>Gerbang</th></tr>
+          </thead>
           <tbody>
             <tr v-for="j in jobs.data.value" :key="j.job_id">
-              <td class="mono">{{ j.job_id.slice(0, 8) }}…</td>
+              <td>
+                <div class="mono">{{ j.job_id.slice(0, 8) }}…</div>
+                <Tag :value="j.trigger === 'auto' ? 'OTOMATIS' : 'MANUAL'"
+                     :severity="j.trigger === 'auto' ? 'info' : 'secondary'"
+                     style="font-size:11px;margin-top:4px" />
+                <span v-if="j.tune_trials" class="sub"> Optuna {{ j.tune_trials }}</span>
+              </td>
               <td class="mono">{{ j.dataset_id.slice(0, 8) }}…</td>
               <td><Tag :value="j.status" :severity="jobSeverity(j.status)" /></td>
               <td class="mono">{{ j.model_version ?? '—' }}</td>
@@ -214,6 +239,7 @@ const importanceChart = computed<Record<string, number>>(() => {
             </tr>
           </tbody>
         </table>
+        </div>
         <p v-if="jobs.data.value?.some((j: any) => j.error)" class="state error"
            style="text-align:left">
           {{ jobs.data.value.find((j: any) => j.error).error }}
@@ -292,6 +318,25 @@ const importanceChart = computed<Record<string, number>>(() => {
         <div class="grid-2" style="margin-top:16px">
           <div><BarChart title="NDCG@10 per kedalaman histori" :data="segmentChart" /></div>
           <div><BarChart title="Feature importance (gain)" :data="importanceChart" /></div>
+          <div>
+            <BarChart title="Bias posisi terestimasi (relatif ke posisi 1)"
+                      :data="positionBiasChart" />
+            <p class="state" style="text-align:left;padding:4px 0 12px">
+              Peluang klik per posisi tampil yang diestimasi unbiased LambdaMART dan
+              dipakai untuk men-debias label (ADR-0008).
+            </p>
+          </div>
+          <div v-if="tuning">
+            <h3>Tuning Optuna</h3>
+            <p class="state" style="text-align:left;padding:4px 0 12px">
+              {{ tuning.trials }} trial · {{ tuning.metric }} terbaik
+              <span class="mono">{{ Number(tuning.bestValue).toFixed(4) }}</span>
+              <template v-if="tuning.heldFixed?.length">
+                · ditetapkan pemanggil: {{ tuning.heldFixed.join(', ') }}
+              </template>
+            </p>
+            <pre class="json">{{ JSON.stringify(tuning.bestParams, null, 2) }}</pre>
+          </div>
         </div>
 
         <h3 style="margin-top:16px">Dataset lineage dan parameter</h3>

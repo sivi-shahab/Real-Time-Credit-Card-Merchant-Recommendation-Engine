@@ -230,3 +230,15 @@ CREATE TABLE IF NOT EXISTS promo_experiment (
   holdout_percent  INT NOT NULL CHECK (holdout_percent BETWEEN 1 AND 99),
   first_exposed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Small training artifacts the dashboard reads: feature importance and the estimated
+-- position-bias curve (ADR-0008). Before this they lived only in the metadata file.
+ALTER TABLE models ADD COLUMN IF NOT EXISTS artifacts JSONB NOT NULL DEFAULT '{}';
+
+-- Uplift reports from `python -m rec.ml.uplift` (ADR-0010): aggregates only, no
+-- per-customer rows, so erasure has nothing to find here.
+CREATE TABLE IF NOT EXISTS uplift_reports (
+  id         BIGSERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  report     JSONB NOT NULL
+);

@@ -25,7 +25,7 @@ from rec.core.models import (
 )
 from rec.core.ranking import DEFAULT_RESULTS, MAX_RESULTS
 from rec.generator.config import DatasetConfig
-from rec.ml import bandit, guardrail, registry
+from rec.ml import bandit, guardrail, registry, uplift
 from rec.ml import client as ranking_client
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, setup_logging, trace_id_var
@@ -614,6 +614,41 @@ async def shadow_summary(p: Annotated[Principal, Depends(require("model:read"))]
                          hours: int = Query(24, ge=1, le=720),
                          modelVersion: str | None = None):
     return await registry.shadow_summary(hours, modelVersion)
+
+
+@app.get("/admin/v1/learning/status", tags=["models"])
+async def learning_status(p: Annotated[Principal, Depends(require("model:read"))]):
+    """ADR-0007/0010 at a glance: what the learning loops are set to and what they did."""
+    conn = await pg.pool()
+    last_auto = await conn.fetchrow(
+        """SELECT job_id, dataset_id, status, created_at,
+                  result->>'modelVersion' AS model_version,
+                  (result->>'approved')::boolean AS approved
+           FROM training_jobs WHERE params->>'trigger' = 'auto'
+           ORDER BY created_at DESC LIMIT 1""")
+    arms = {r["arm"]: r["customers"] for r in await conn.fetch(
+        "SELECT arm, count(*) AS customers FROM promo_experiment GROUP BY arm")}
+    return {
+        "autoRetrain": {
+            "enabled": settings.auto_retrain_interval_hours > 0,
+            "intervalHours": settings.auto_retrain_interval_hours,
+            "minNewImpressions": settings.auto_retrain_min_new_impressions,
+            "lastJob": dict(last_auto) if last_auto else None,
+        },
+        "bandit": {
+            "enabled": settings.online_bandit_enabled,
+            "version": bandit.VERSION,
+            "exploration": settings.online_bandit_exploration,
+            "learnIntervalSeconds": settings.online_bandit_learn_interval_seconds,
+            "learnedUntil": await store.r.get(bandit.WATERMARK_KEY),
+            "shadow24h": await registry.shadow_summary(24, bandit.VERSION),
+        },
+        "promoHoldout": {
+            "percent": settings.promo_holdout_percent,
+            "arms": {"TREATMENT": arms.get("TREATMENT", 0), "HOLDOUT": arms.get("HOLDOUT", 0)},
+        },
+        "uplift": await uplift.latest_report(),
+    }
 
 
 @app.get("/admin/v1/metrics/overview", tags=["ops"])

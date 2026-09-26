@@ -718,6 +718,56 @@ async def test_uplift_frame_reads_outcomes_after_first_exposure(replayed):
         await conn.execute("DELETE FROM promo_experiment WHERE customer_id = ANY($1)", ids)
 
 
+async def test_model_detail_carries_importance_and_position_bias(client, replayed):
+    from rec.ml import registry
+
+    curve = {"clicked": [1.0, 0.6, 0.5], "unclicked": [1.0, 0.9, 0.95]}
+    await registry.record_model({
+        "modelVersion": "m-artifacts", "featureSchemaVersion": "1.0.0",
+        "trainerVersion": "test", "mlflowRunId": None, "approved": True,
+        "artifacts": {"model": "/tmp/m.json", "featureImportanceGain": {"promo_eligible": 3.2},
+                      "positionBias": curve, "learningCurve": {"too": "big"}},
+        "metrics": {}, "baselineMetrics": {}, "segmentMetrics": {}, "gates": [],
+        "datasetLineage": {},
+    }, dataset_id="test-dataset", job_id=None)
+    body = (await client.get("/admin/v1/models/m-artifacts", headers=ANALYST)).json()
+    assert body["artifacts"] == {"featureImportanceGain": {"promo_eligible": 3.2},
+                                 "positionBias": curve}
+
+
+async def test_learning_status_reports_every_loop(client, replayed, monkeypatch):
+    from rec.ml import uplift
+
+    monkeypatch.setattr(settings, "auto_retrain_interval_hours", 6.0)
+    monkeypatch.setattr(settings, "online_bandit_enabled", True)
+    monkeypatch.setattr(settings, "promo_holdout_percent", 10)
+    conn = await pg.pool()
+    await conn.execute(
+        """INSERT INTO training_jobs (job_id, dataset_id, status, params)
+           VALUES ('job-learning', 'live-x', 'COMPLETED', '{"trigger": "auto"}')""")
+    await conn.executemany(
+        """INSERT INTO promo_experiment (customer_id, arm, holdout_percent)
+           VALUES ($1, $2, 10)""", [("C-arm-t", "TREATMENT"), ("C-arm-h", "HOLDOUT")])
+    await uplift.save_report({"customers": 400, "qini": {"model": 0.4, "random": 0.0}})
+    try:
+        body = (await client.get("/admin/v1/learning/status", headers=ANALYST)).json()
+        assert body["autoRetrain"]["enabled"] and body["autoRetrain"]["intervalHours"] == 6.0
+        assert body["autoRetrain"]["lastJob"]["job_id"] == "job-learning"
+        assert body["bandit"]["enabled"] and body["bandit"]["version"] == "online-ucb"
+        assert set(body["bandit"]["shadow24h"]) >= {"comparisons", "avg_rank_agreement"}
+        assert body["promoHoldout"]["percent"] == 10
+        assert body["promoHoldout"]["arms"]["HOLDOUT"] >= 1
+        assert body["uplift"]["customers"] == 400 and body["uplift"]["createdAt"]
+        jobs = (await client.get("/admin/v1/training-jobs", headers=ANALYST)).json()
+        assert next(j for j in jobs if j["job_id"] == "job-learning")["trigger"] == "auto"
+        assert (await client.get("/admin/v1/learning/status")).status_code == 401
+    finally:
+        await conn.execute("DELETE FROM training_jobs WHERE job_id='job-learning'")
+        await conn.execute(
+            "DELETE FROM promo_experiment WHERE customer_id IN ('C-arm-t', 'C-arm-h')")
+        await conn.execute("DELETE FROM uplift_reports")
+
+
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
     assert (await client.post("/admin/v1/training-jobs",
                               json={"datasetId": "test-dataset"},

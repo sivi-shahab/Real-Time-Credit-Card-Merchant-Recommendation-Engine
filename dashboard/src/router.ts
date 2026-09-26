@@ -21,6 +21,8 @@ const routes: RouteRecordRaw[] = [
             icon: 'pi-search' } },
   { path: '/models', component: () => import('@/views/ModelsView.vue'),
     meta: { title: 'Model & Eksperimen', permission: 'model:read', icon: 'pi-sitemap' } },
+  { path: '/learning', component: () => import('@/views/LearningView.vue'),
+    meta: { title: 'Pembelajaran', permission: 'model:read', icon: 'pi-sync' } },
   { path: '/merchants', component: () => import('@/views/MerchantsView.vue'),
     meta: { title: 'Merchant', permission: 'merchant:read', icon: 'pi-shop' } },
   { path: '/promotions', component: () => import('@/views/PromotionsView.vue'),

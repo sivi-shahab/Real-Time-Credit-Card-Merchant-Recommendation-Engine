@@ -1259,6 +1259,26 @@
         ]
       }
     },
+    "/admin/v1/learning/status": {
+      "get": {
+        "description": "ADR-0007/0010 at a glance: what the learning loops are set to and what they did.",
+        "operationId": "learning_status_admin_v1_learning_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Learning Status",
+        "tags": [
+          "models"
+        ]
+      }
+    },
     "/admin/v1/me": {
       "get": {
         "operationId": "me_admin_v1_me_get",
