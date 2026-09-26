@@ -43,7 +43,8 @@ Manual (Approver or Platform Operator):
 ```bash
 curl -X POST localhost:8000/admin/v1/models/<version>/rollback -H "Authorization: Bearer <token>"
 ```
-Rollback goes to the previous model, or to the baseline if there is none. It never needs
+Rollback goes to the previous model that served (CANARY/FULL), or to the baseline if there
+is none; a model that was only ever in SHADOW is never restored. It never needs
 approval; re-promotion always does. Cache is invalidated on every change.
 
 ## quarantine
@@ -51,6 +52,40 @@ More than 5% of events quarantined. `GET /admin/v1/metrics/overview` →
 `quarantineByReason`. Quarantined events are in `transaction_log` (outcome `QUARANTINED`)
 and on `pipeline.dlq`. Fix the producer; do not hand-edit the log. Once fixed, re-send the
 events with **the same eventId** only if they were never applied.
+
+## auto-retrain
+`AutoRetrainFailing`: an automatic check or training job failed. The API log names the
+step (`auto_retrain`, `ml_jobs`); `GET /admin/v1/training-jobs` shows the job and its
+error. Common causes: the data volume is full (every run writes a `live-*` snapshot —
+remove old ones), or the export found no observable impressions. Nothing serving changes:
+the current model stays until someone promotes another.
+
+`AutoTrainedModelInShadow`: an automatically trained model passed its gates and went to
+SHADOW (actor `system:auto-retrain` in the audit log). An Approver reviews the shadow
+numbers on the Models page before any CANARY. To take it out of SHADOW, roll back.
+To stop the loop: `AUTO_RETRAIN_INTERVAL_HOURS=0` and restart the API.
+
+## online-bandit
+`BanditLearningFailing` or `BanditLearningStalled`: the online bandit (shadow only, never
+served) cannot learn. Check the API log (`bandit`) and Redis: the model, watermark and
+contexts live there (`bandit:*`). Losing them only restarts learning from scratch; there is
+no customer impact. To stop it: `ONLINE_BANDIT_ENABLED=false` and restart the API.
+
+## promo-holdout
+`PromoHoldoutSampleRatioMismatch`: over the last day the share of new customers in the
+HOLDOUT arm differs from `PROMO_HOLDOUT_PERCENT` by more than 3 points. Assignment is a
+deterministic hash, so this means recording is losing rows for one arm, or the split was
+changed mid-experiment (see `promo_experiment.holdout_percent`). An uplift estimate from a
+mismatched experiment is not trustworthy: pause the analysis, find the cause, and note it
+in the report. Turning the holdout off (`PROMO_HOLDOUT_PERCENT=0`) restores offers to all
+customers at once.
+
+## learning-switches
+`LearningSwitchChanged`: a replica restarted with a different learning setting
+(`auto_retrain_*`, `online_bandit_*`, `promo_holdout_percent`). The first replica to start
+with new values writes an audit row (`system:config`, action `config.learning`, before and
+after). Confirm the change was intended and approved; a holdout change during a running
+experiment invalidates it (see promo-holdout).
 
 ## redis-loss
 Redis holds derived state only (SDD 3.3). Admin sessions, cache and features are lost;

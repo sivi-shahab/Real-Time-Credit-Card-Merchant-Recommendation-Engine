@@ -27,6 +27,7 @@ from river.linear_model import BayesianLinearRegression
 
 from rec.ml import registry
 from rec.ml.attribution import ATTRIBUTION_WINDOW, OBSERVATION_WINDOW, label_from_events
+from rec.obs import BANDIT_LEARNED, BANDIT_LEARNED_UNTIL, BANDIT_PASSES, BANDIT_SHADOW
 from rec.settings import settings
 from rec.store import pg
 
@@ -116,9 +117,12 @@ async def shadow(store, request_id: str, customer_id: str, served_order: list[st
                                        key=lambda p: (-p[0], p[1]))][:len(served_order)]
         await registry.record_shadow(request_id, customer_id, VERSION, "LIVE",
                                      registry.rank_agreement(served_order, ranked),
-                            bool(served_order and ranked and ranked[0] == served_order[0]),
-                            (time.perf_counter() - t0) * 1000)
+                                     bool(served_order and ranked
+                                          and ranked[0] == served_order[0]),
+                                     (time.perf_counter() - t0) * 1000)
+        BANDIT_SHADOW.labels("recorded").inc()
     except Exception as exc:  # noqa: BLE001 - the bandit is informational only
+        BANDIT_SHADOW.labels("failed").inc()
         log.info("bandit shadow skipped: %s", exc)
 
 
@@ -133,6 +137,7 @@ async def learn(store, *, now: datetime | None = None) -> int:
     now = now or datetime.now(UTC)
     if not await store.r.set(LOCK_KEY, "1", nx=True,
                              ex=settings.online_bandit_learn_interval_seconds):
+        BANDIT_PASSES.labels("locked").inc()
         return 0
     try:
         until = now - OBSERVATION_WINDOW
@@ -167,6 +172,9 @@ async def learn(store, *, now: datetime | None = None) -> int:
             await store.r.set(MODEL_KEY, dump(model))
             _cached = (time.monotonic(), model)
         await store.r.set(WATERMARK_KEY, until.isoformat())
+        BANDIT_PASSES.labels("ok").inc()
+        BANDIT_LEARNED.inc(learned)
+        BANDIT_LEARNED_UNTIL.set(until.timestamp())
         return learned
     finally:
         await store.r.delete(LOCK_KEY)
@@ -180,4 +188,5 @@ async def loop(store) -> None:
             if learned:
                 log.info("bandit learned %d impressions", learned)
         except Exception:  # noqa: BLE001 - a failed pass must not kill the API
+            BANDIT_PASSES.labels("failed").inc()
             log.exception("bandit learning pass failed")

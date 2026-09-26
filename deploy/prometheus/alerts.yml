@@ -31,3 +31,33 @@ groups:
         for: 2m
         labels: {severity: page}
         annotations: {summary: "{{ $labels.job }} is not being scraped", runbook: "docs/runbooks.md#service-down"}
+      # Learning loops (ADR-0007, ADR-0010). All are tickets: none of them affects what a
+      # customer is served today, but each needs a person to look.
+      - alert: AutoRetrainFailing
+        expr: sum(increase(auto_retrain_runs_total{outcome="failed"}[6h])) > 0 or sum(increase(training_jobs_total{trigger="auto",status="FAILED"}[6h])) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "Automatic retraining failed", runbook: "docs/runbooks.md#auto-retrain"}
+      - alert: AutoTrainedModelInShadow
+        expr: sum(increase(auto_shadow_promotions_total{outcome="promoted"}[15m])) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "An automatically trained model is in SHADOW; an Approver reviews it before any CANARY", runbook: "docs/runbooks.md#auto-retrain"}
+      - alert: BanditLearningFailing
+        expr: sum(increase(bandit_learning_passes_total{outcome="failed"}[30m])) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "Online bandit learning passes are failing", runbook: "docs/runbooks.md#online-bandit"}
+      - alert: BanditLearningStalled
+        expr: max(learning_switch{name="online_bandit_enabled"}) == 1 and on() (time() - max(bandit_learned_until_timestamp_seconds)) > 2 * 86400
+        for: 30m
+        labels: {severity: ticket}
+        annotations: {summary: "Online bandit has not advanced its watermark for a day", runbook: "docs/runbooks.md#online-bandit"}
+      - alert: PromoHoldoutSampleRatioMismatch
+        # Assignment is a deterministic hash, so the observed split should sit on the
+        # configured one; with >2000 new customers a 3-point gap is ~4.5 standard errors.
+        expr: abs(sum(increase(promo_holdout_assignments_total{arm="HOLDOUT"}[1d])) / sum(increase(promo_holdout_assignments_total[1d])) - on() max(learning_switch{name="promo_holdout_percent"}) / 100) > 0.03 and on() sum(increase(promo_holdout_assignments_total[1d])) > 2000
+        for: 1h
+        labels: {severity: ticket}
+        annotations: {summary: "Promo holdout share differs from the configured split (sample ratio mismatch)", runbook: "docs/runbooks.md#promo-holdout"}
+      - alert: LearningSwitchChanged
+        expr: changes(learning_switch[15m]) > 0
+        labels: {severity: ticket}
+        annotations: {summary: "Learning setting {{ $labels.name }} changed on {{ $labels.instance }}", runbook: "docs/runbooks.md#learning-switches"}

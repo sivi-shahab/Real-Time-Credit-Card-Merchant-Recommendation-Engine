@@ -538,6 +538,11 @@ async def test_rollback_never_puts_a_shadow_model_on_full_traffic(client, replay
     assert back.json()["mode"] == "BASELINE" and back.json()["model_version"] is None
 
 
+def _metric(metric: str, /, **labels) -> float:
+    from prometheus_client import REGISTRY
+    return REGISTRY.get_sample_value(metric, labels) or 0.0
+
+
 async def test_auto_trained_model_reaches_shadow_only_while_nothing_serves(
         replayed, baseline_deployment, monkeypatch):
     from rec.api import ml_jobs
@@ -547,11 +552,15 @@ async def test_auto_trained_model_reaches_shadow_only_while_nothing_serves(
     for version in ("m-auto-1", "m-live-1", "m-auto-2"):
         await _register_fake_model(version)
 
+    promoted = _metric("auto_shadow_promotions_total", outcome="promoted")
+    skipped = _metric("auto_shadow_promotions_total", outcome="skipped_serving")
     assert await ml_jobs.shadow_if_idle("m-auto-1")
     assert (await registry.deployment())["mode"] == "SHADOW"
 
     await registry.promote("m-live-1", mode="FULL", canary_percent=100, actor="test")
     assert not await ml_jobs.shadow_if_idle("m-auto-2")
+    assert _metric("auto_shadow_promotions_total", outcome="promoted") == promoted + 1
+    assert _metric("auto_shadow_promotions_total", outcome="skipped_serving") == skipped + 1
     assert (await registry.deployment())["model_version"] == "m-live-1"
     # R-1/E-6: the automatic promotion is attributable to the system actor
     conn = await pg.pool()
@@ -583,6 +592,8 @@ async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
         [(impression_id, n, now - timedelta(days=2)) for n, impression_id in enumerate(ids)])
     try:
         monkeypatch.setattr(settings, "auto_retrain_min_new_impressions", 10**9)
+        runs = {o: _metric("auto_retrain_runs_total", outcome=o)
+                for o in ("below_threshold", "queued", "locked")}
         assert await auto_retrain.check(store, now=now) is None
 
         monkeypatch.setattr(settings, "auto_retrain_min_new_impressions", 3)
@@ -594,6 +605,9 @@ async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
         assert manifest["rowCounts"]["feedbackEvents"] >= 3
 
         assert await auto_retrain.check(store, now=now) is None  # one run per interval
+        assert {o: _metric("auto_retrain_runs_total", outcome=o) - before
+                for o, before in runs.items()} == {"below_threshold": 1, "queued": 1,
+                                                   "locked": 1}
     finally:
         await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)", ids)
         await store.r.delete(auto_retrain.LOCK_KEY)
@@ -646,9 +660,16 @@ async def test_online_bandit_shadows_live_requests_and_learns_each_impression_on
              interaction_type, occurred_at) VALUES ('int-bandit', $1, $2, $3, 'CLICK', $4)""",
         impression_ids[0], cid, served[0], now - timedelta(days=2) + timedelta(minutes=1))
     try:
+        learned, passes = (_metric("bandit_learned_impressions_total"),
+                           _metric("bandit_learning_passes_total", outcome="ok"))
         assert await bandit.learn(store, now=now) == len(served)
         assert await store.r.get(bandit.MODEL_KEY)
         assert await bandit.learn(store, now=now) == 0  # watermark: learned exactly once
+        assert _metric("bandit_learned_impressions_total") == learned + len(served)
+        assert _metric("bandit_learning_passes_total", outcome="ok") == passes + 2
+        assert _metric("bandit_learned_until_timestamp_seconds") == pytest.approx(
+            (now - timedelta(days=1)).timestamp())
+        assert _metric("bandit_shadow_evaluations_total", outcome="recorded") >= 1
     finally:
         await conn.execute("DELETE FROM interactions WHERE interaction_id='int-bandit'")
         await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)",
@@ -681,11 +702,18 @@ async def test_promo_holdout_serves_no_offers_and_records_the_first_arm(
     treated = next(c for c in ids if not uplift.in_holdout(c, 50))
 
     monkeypatch.setattr(settings, "promo_holdout_percent", 50)
+    assigned = {arm: _metric("promo_holdout_assignments_total", arm=arm)
+                for arm in ("HOLDOUT", "TREATMENT")}
     try:
         assert await offers(held) == 0
         await offers(treated)
         arms = dict(await _poll(lambda: _arms(conn, [held, treated])))
         assert arms == {held: "HOLDOUT", treated: "TREATMENT"}
+        # one new customer per arm; the SRM alert counts customers, not visits
+        await offers(held)
+        await asyncio.sleep(0.2)
+        assert {arm: _metric("promo_holdout_assignments_total", arm=arm) - before
+                for arm, before in assigned.items()} == {"HOLDOUT": 1, "TREATMENT": 1}
     finally:
         await conn.execute("DELETE FROM promo_experiment WHERE customer_id = ANY($1)",
                            [held, treated])
@@ -798,6 +826,36 @@ async def test_feedback_is_accepted_only_from_the_customer_it_describes(client, 
     finally:
         await conn.execute("DELETE FROM interactions WHERE impression_id = 'imp-t7'")
         await conn.execute("DELETE FROM impressions WHERE impression_id = 'imp-t7'")
+
+
+async def test_learning_settings_are_exported_and_a_change_is_audited(monkeypatch):
+    """T-10: the switches are env vars; a replica starting with different values leaves an
+    audit row, and the same values leave none. The audit table is append-only, so the
+    test counts rows rather than clearing them."""
+    from rec.api.app import record_learning_config
+
+    conn = await pg.pool()
+
+    async def audited() -> int:
+        return await conn.fetchval(
+            "SELECT count(*) FROM audit_events WHERE action = 'config.learning'")
+
+    await record_learning_config()          # align with whatever was audited last
+    before = await audited()
+    assert await record_learning_config() is None and await audited() == before
+
+    monkeypatch.setattr(settings, "promo_holdout_percent", settings.promo_holdout_percent + 7)
+    after = await record_learning_config()
+    assert after["promo_holdout_percent"] == settings.promo_holdout_percent
+    assert await audited() == before + 1
+    row = await conn.fetchrow(
+        """SELECT actor, changes FROM audit_events WHERE action = 'config.learning'
+           ORDER BY id DESC LIMIT 1""")
+    change = json.loads(row["changes"])
+    assert row["actor"] == "system:config"
+    assert change["after"]["promo_holdout_percent"] - change["before"]["promo_holdout_percent"] == 7
+    holdout = settings.promo_holdout_percent
+    assert _metric("learning_switch", name="promo_holdout_percent") == holdout
 
 
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):

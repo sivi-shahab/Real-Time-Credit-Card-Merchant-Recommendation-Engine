@@ -26,7 +26,8 @@ production step remains · **OPEN** not met.
 | Feedback accepted only from the customer it describes (T-7) | PASS | `test_feedback_is_accepted_only_from_the_customer_it_describes` |
 | Automatic learning cannot put a model in front of customers without an Approver (E-6) | PASS | `test_auto_trained_model_reaches_shadow_only_while_nothing_serves` (also audited as `system:auto-retrain`), `test_rollback_never_puts_a_shadow_model_on_full_traffic` |
 | Bandit state is data, not code (T-9) | PARTIAL | JSON, not pickle: `test_state_round_trips_through_json_and_keeps_learning_identically`. Its integrity waits on Redis AUTH |
-| Live feedback bound to served responses; learning switches under change control (S-5, T-10) | OPEN | keep `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until both are closed |
+| Live feedback bound to served responses (S-5) | OPEN | keep `AUTO_RETRAIN_INTERVAL_HOURS=0` until closed |
+| Learning switches under change control (T-10) | PARTIAL | a change is audited (`system:config`) and alerted (`LearningSwitchChanged`): `test_learning_settings_are_exported_and_a_change_is_audited`. Approval before a change ships is not built |
 | Customer channel authentication (threat S-2) | OPEN | `cust-<id>` is a dev stand-in, refused outside local/test/ci; real mobile-channel token verification is not built |
 | Model artifact integrity between approval and load (T-4) | OPEN | record SHA-256 at training, verify at warm |
 | Event contracts: Avro + `BACKWARD_TRANSITIVE` in CI (EVT-004) | PASS | `tests/test_contracts.py`, `scripts/check_avro_compat.py` |
@@ -84,11 +85,11 @@ and one consumer per partition (6), and a real Kafka load generator.
 | Check | Status | Evidence |
 |---|---|---|
 | Metrics | PASS | `/metrics` on api, ranking, stream; Prometheus scraping all three |
-| Alerts with runbook links | PASS | `deploy/prometheus/alerts.yml` (6 rules loaded) → `docs/runbooks.md` |
+| Alerts with runbook links | PASS | `deploy/prometheus/alerts.yml` (12 rules) → `docs/runbooks.md`; `promtool check` and the rule unit tests in `alerts_test.yml` run in CI |
 | Trace correlation | PARTIAL | `traceId` in every error, header, log line and audit row; no distributed tracing (OpenTelemetry) across services |
 | Runbooks | PASS | `docs/runbooks.md` |
 | Alert routing (pager), on-call rota, dashboards in the ops tool | OPEN | organisational |
-| Learning loops observable (auto-retrain runs, bandit learning, holdout exposure) | PARTIAL | state on the dashboard's Pembelajaran page (`test_learning_status_reports_every_loop`); no Prometheus metrics or alerts yet |
+| Learning loops observable (auto-retrain runs, bandit learning, holdout exposure) | PASS | metrics for each loop, asserted in the e2e tests that drive them; alerts for failures, stalls, automatic SHADOW, holdout sample-ratio mismatch and setting changes, each with a unit test and a runbook section; state on the Pembelajaran page |
 | Training isolated from serving (D-7) | OPEN | training and Optuna tuning run in a thread of the API process |
 
 ## Sign-off

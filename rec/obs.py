@@ -10,7 +10,7 @@ import json
 import logging
 import re
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
 
 trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id",
                                                                           default=None)
@@ -73,3 +73,23 @@ GUARDRAIL_ROLLBACKS = Counter("guardrail_rollbacks_total", "Automatic model roll
 INFERENCE_LATENCY = Histogram("ranking_inference_seconds", "Model predict time",
                               ["model_version"],
                               buckets=(.001, .0025, .005, .01, .025, .05, .1, .25, .5))
+
+# Learning loops (ADR-0007, ADR-0010); alerts in deploy/prometheus/alerts.yml.
+LEARNING_SWITCH = Gauge("learning_switch", "Learning settings in force on this replica",
+                        ["name"])
+AUTO_RETRAIN_RUNS = Counter("auto_retrain_runs_total", "Auto-retrain evaluations",
+                            ["outcome"])  # queued | below_threshold | locked | failed
+TRAINING_JOBS = Counter("training_jobs_total", "Training jobs finished",
+                        ["trigger", "status"])
+AUTO_SHADOW = Counter("auto_shadow_promotions_total", "Automatic SHADOW promotions",
+                      ["outcome"])  # promoted | skipped_serving | failed
+BANDIT_PASSES = Counter("bandit_learning_passes_total", "Online bandit learning passes",
+                        ["outcome"])  # ok | locked | failed
+BANDIT_LEARNED = Counter("bandit_learned_impressions_total",
+                         "Impressions the online bandit learned from")
+BANDIT_LEARNED_UNTIL = Gauge("bandit_learned_until_timestamp_seconds",
+                             "Impressions up to this time are learned (watermark)")
+BANDIT_SHADOW = Counter("bandit_shadow_evaluations_total",
+                        "Online bandit orderings recorded beside live requests", ["outcome"])
+PROMO_ASSIGNMENTS = Counter("promo_holdout_assignments_total",
+                            "Customers newly assigned to a promo-holdout arm", ["arm"])

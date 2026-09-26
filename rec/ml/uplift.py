@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 import pandas as pd
 
+from rec.obs import PROMO_ASSIGNMENTS
 from rec.store import pg
 
 log = logging.getLogger("uplift")
@@ -44,11 +45,14 @@ def in_holdout(customer_id: str, percent: int) -> bool:
 async def record_exposure(customer_id: str, holdout: bool, percent: int) -> None:
     """First arm only. Fire-and-forget from serving; a lost row costs one sample."""
     try:
+        arm = "HOLDOUT" if holdout else "TREATMENT"
         conn = await pg.pool()
-        await conn.execute(
+        tag = await conn.execute(
             """INSERT INTO promo_experiment (customer_id, arm, holdout_percent)
                VALUES ($1, $2, $3) ON CONFLICT (customer_id) DO NOTHING""",
-            customer_id, "HOLDOUT" if holdout else "TREATMENT", percent)
+            customer_id, arm, percent)
+        if tag.endswith(" 1"):  # a new customer, not a repeat visit: the SRM check unit
+            PROMO_ASSIGNMENTS.labels(arm).inc()
     except Exception as exc:  # noqa: BLE001 - never affects the served response
         log.info("promo exposure not recorded: %s", exc)
 

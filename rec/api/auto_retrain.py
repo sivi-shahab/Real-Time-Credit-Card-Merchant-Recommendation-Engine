@@ -15,6 +15,7 @@ from pathlib import Path
 from rec.api import ml_jobs
 from rec.ml import live_dataset
 from rec.ml.attribution import OBSERVATION_WINDOW
+from rec.obs import AUTO_RETRAIN_RUNS
 from rec.settings import settings
 from rec.store import pg
 
@@ -34,9 +35,11 @@ async def check(store, *, now: datetime | None = None) -> str | None:
            WHERE occurred_at <= $1 AND ($2::timestamptz IS NULL OR occurred_at > $2)""",
         now - OBSERVATION_WINDOW, last - OBSERVATION_WINDOW if last else None)
     if new < settings.auto_retrain_min_new_impressions:
+        AUTO_RETRAIN_RUNS.labels("below_threshold").inc()
         return None
     ttl = max(60, int(settings.auto_retrain_interval_hours * 3600))
     if not await store.r.set(LOCK_KEY, "1", nx=True, ex=ttl):
+        AUTO_RETRAIN_RUNS.labels("locked").inc()
         return None  # another replica is on it
 
     dataset_id = f"live-{now:%Y%m%d%H%M%S}"
@@ -45,6 +48,7 @@ async def check(store, *, now: datetime | None = None) -> str | None:
     job_id = await ml_jobs.create_training_job(dataset_id, {"trigger": "auto"})
     await pg.audit(ml_jobs.AUTO_ACTOR, "System", "training.start", f"trainingJob/{job_id}",
                    outcome="AUTOMATIC", changes={"datasetId": dataset_id, "newImpressions": new})
+    AUTO_RETRAIN_RUNS.labels("queued").inc()
     log.info("auto-retrain queued %s on %s (%d new impressions)", job_id, dataset_id, new)
     return job_id
 
@@ -55,4 +59,5 @@ async def loop(store) -> None:
         try:
             await check(store)
         except Exception:  # noqa: BLE001 - a failed run must not kill the API
+            AUTO_RETRAIN_RUNS.labels("failed").inc()
             log.exception("auto-retrain check failed")

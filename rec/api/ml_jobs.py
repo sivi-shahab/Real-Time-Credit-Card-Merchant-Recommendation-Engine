@@ -11,6 +11,7 @@ from rec.api.jobs import publish
 from rec.ml import client as ranking_client
 from rec.ml import registry
 from rec.ml.train import train
+from rec.obs import AUTO_SHADOW, TRAINING_JOBS
 from rec.settings import settings
 from rec.store import pg
 
@@ -63,6 +64,7 @@ async def _run(job_id: str, dataset_id: str, params: dict) -> None:
         await conn.execute(
             """UPDATE training_jobs SET status='COMPLETED', result=$2, updated_at=now()
                WHERE job_id=$1""", job_id, json.dumps(payload, default=str))
+        TRAINING_JOBS.labels(params.get("trigger", "manual"), "COMPLETED").inc()
         await publish({"type": "training.status", "jobId": job_id, "status": "COMPLETED",
                        "modelVersion": payload["modelVersion"],
                        "approved": payload["approved"]})
@@ -72,6 +74,7 @@ async def _run(job_id: str, dataset_id: str, params: dict) -> None:
         await conn.execute(
             "UPDATE training_jobs SET status='FAILED', error=$2, updated_at=now() "
             "WHERE job_id=$1", job_id, str(exc)[:1000])
+        TRAINING_JOBS.labels(params.get("trigger", "manual"), "FAILED").inc()
         await publish({"type": "training.status", "jobId": job_id, "status": "FAILED",
                        "error": str(exc)[:200]})
 
@@ -82,13 +85,16 @@ async def shadow_if_idle(model_version: str) -> bool:
     every step past SHADOW, stays an Approver's decision (ADR-0005, SEC-001)."""
     try:
         if (await registry.deployment())["mode"] not in ("BASELINE", "SHADOW"):
+            AUTO_SHADOW.labels("skipped_serving").inc()
             return False
         await ranking_client.warm(model_version)
         await registry.promote(model_version, mode="SHADOW", canary_percent=0,
                                actor=AUTO_ACTOR, note="auto-retrain")
     except Exception:  # noqa: BLE001 - the job already COMPLETED; shadowing is best effort
+        AUTO_SHADOW.labels("failed").inc()
         log.exception("auto-shadow of %s skipped", model_version)
         return False
+    AUTO_SHADOW.labels("promoted").inc()
     await pg.audit(AUTO_ACTOR, "System", "model.promote", f"model/{model_version}",
                    outcome="AUTOMATIC", changes={"mode": "SHADOW"})
     await publish({"type": "model.shadowed", "modelVersion": model_version})

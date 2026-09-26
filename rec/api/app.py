@@ -28,7 +28,7 @@ from rec.generator.config import DatasetConfig
 from rec.ml import bandit, guardrail, registry, uplift
 from rec.ml import client as ranking_client
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
-from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, setup_logging, trace_id_var
+from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, LEARNING_SWITCH, setup_logging, trace_id_var
 from rec.settings import settings
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
@@ -37,10 +37,37 @@ from rec.store.redis_store import OnlineStore
 store = OnlineStore()
 
 
+LEARNING_SWITCHES = ("auto_retrain_interval_hours", "auto_retrain_min_new_impressions",
+                     "online_bandit_enabled", "online_bandit_exploration",
+                     "promo_holdout_percent")
+
+
+async def record_learning_config() -> dict | None:
+    """T-10: the learning switches are env vars. Export them as gauges (a change alerts),
+    and audit a change when a replica starts with values unlike the last audited ones.
+    Returns the new values when it audited a change."""
+    # ponytail: replicas starting together may both audit the same change; dedupe with an
+    # advisory lock if the duplicate rows matter.
+    current = {name: getattr(settings, name) for name in LEARNING_SWITCHES}
+    for name, value in current.items():
+        LEARNING_SWITCH.labels(name).set(float(value))
+    conn = await pg.pool()
+    last = await conn.fetchval(
+        """SELECT changes FROM audit_events WHERE action = 'config.learning'
+           ORDER BY id DESC LIMIT 1""")
+    previous = json.loads(last)["after"] if last else None
+    if previous == current:
+        return None
+    await pg.audit("system:config", "System", "config.learning", "settings/learning",
+                   outcome="AUTOMATIC", changes={"before": previous, "after": current})
+    return current
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging()
     await pg.pool()
+    await record_learning_config()
     watchers = [asyncio.create_task(guardrail.loop(store))]
     if settings.auto_retrain_interval_hours > 0:
         watchers.append(asyncio.create_task(auto_retrain.loop(store)))

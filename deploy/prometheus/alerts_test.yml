@@ -1,0 +1,98 @@
+# promtool unit tests for the learning-loop alerts (ADR-0007, ADR-0010). Sample spacing
+# stays within PromQL's 5-minute lookback, as a 15 s scrape does; wider gaps make gauges
+# vanish between samples and no `for:` clause can ever hold.
+#   docker run --rm -v "$PWD/deploy/prometheus:/w" -w /w --entrypoint promtool \
+#     prom/prometheus:v2.55.1 test rules alerts_test.yml
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+
+tests:
+  - name: an automatic job failure raises a ticket
+    interval: 1m
+    input_series:
+      - series: 'training_jobs_total{trigger="auto",status="FAILED"}'
+        values: '0 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AutoRetrainFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations: {summary: "Automatic retraining failed", runbook: "docs/runbooks.md#auto-retrain"}
+
+  - name: an automatic SHADOW promotion asks an Approver to look
+    interval: 1m
+    input_series:
+      - series: 'auto_shadow_promotions_total{outcome="promoted"}'
+        values: '0 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AutoTrainedModelInShadow
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations: {summary: "An automatically trained model is in SHADOW; an Approver reviews it before any CANARY", runbook: "docs/runbooks.md#auto-retrain"}
+
+  - name: a bandit watermark a day behind schedule is stalled
+    interval: 2m
+    input_series:
+      - series: 'learning_switch{name="online_bandit_enabled"}'
+        values: '1x1500'
+      - series: 'bandit_learned_until_timestamp_seconds{instance="stalled"}'
+        values: '0x1500'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: BanditLearningStalled
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations: {summary: "Online bandit has not advanced its watermark for a day", runbook: "docs/runbooks.md#online-bandit"}
+  - name: a watermark that keeps up with time (one day behind, by design) does not alert
+    interval: 2m
+    input_series:
+      - series: 'learning_switch{name="online_bandit_enabled"}'
+        values: '1x1500'
+      - series: 'bandit_learned_until_timestamp_seconds'
+        values: '-86400+120x1500'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: BanditLearningStalled
+        exp_alerts: []
+
+  - name: a 20% holdout share under a 10% split is a sample ratio mismatch
+    interval: 2m
+    input_series:
+      - series: 'promo_holdout_assignments_total{arm="HOLDOUT"}'
+        values: '0+1x900'
+      - series: 'promo_holdout_assignments_total{arm="TREATMENT"}'
+        values: '0+4x900'
+      - series: 'learning_switch{name="promo_holdout_percent"}'
+        values: '10x900'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: PromoHoldoutSampleRatioMismatch
+        exp_alerts:
+          - exp_labels: {severity: ticket}
+            exp_annotations: {summary: "Promo holdout share differs from the configured split (sample ratio mismatch)", runbook: "docs/runbooks.md#promo-holdout"}
+  - name: a split that matches its configuration does not alert
+    interval: 2m
+    input_series:
+      - series: 'promo_holdout_assignments_total{arm="HOLDOUT"}'
+        values: '0+1x900'
+      - series: 'promo_holdout_assignments_total{arm="TREATMENT"}'
+        values: '0+9x900'
+      - series: 'learning_switch{name="promo_holdout_percent"}'
+        values: '10x900'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: PromoHoldoutSampleRatioMismatch
+        exp_alerts: []
+
+  - name: a learning setting that changes on a replica raises a ticket
+    interval: 1m
+    input_series:
+      - series: 'learning_switch{name="promo_holdout_percent",instance="api:8000"}'
+        values: '0 0 10 10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: LearningSwitchChanged
+        exp_alerts:
+          - exp_labels: {severity: ticket, name: promo_holdout_percent, instance: "api:8000"}
+            exp_annotations: {summary: "Learning setting promo_holdout_percent changed on api:8000", runbook: "docs/runbooks.md#learning-switches"}

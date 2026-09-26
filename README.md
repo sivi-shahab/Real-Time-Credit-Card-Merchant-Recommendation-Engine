@@ -288,11 +288,11 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
 - **Off-policy evaluation.** Serving is deterministic, so no logged propensities exist and
   doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
   a small randomised share of served slates, which changes what customers see.
-- **Metrics, alerts and controls for the learning loops.** The dashboard shows their
-  state (Pembelajaran page, `/admin/v1/learning/status`) and each model's tuning and
-  position-bias curve, but the loops export no Prometheus metrics or alerts, their
-  settings are env vars rather than audited controls, and the uplift report is produced
-  by running `python -m rec.ml.uplift` by hand.
+- **Approved changes to the learning switches.** The loops have metrics, alerts with
+  runbooks, and a dashboard page, and a changed setting is audited and alerted when a
+  replica starts with it; but the settings are env vars, so nobody approves a change
+  before it ships. The uplift report is also produced by running `python -m rec.ml.uplift`
+  by hand.
 - **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
   the API process; a large `tuneTrials` competes with serving on that replica.
 
@@ -335,8 +335,8 @@ most:
    planted effect; generated purchases do not respond to promos) all need re-checking on
    live logs before any of them drives a decision.
 10. **Learning loops before real feedback.** Feedback is not yet bound to what was
-    served, the learning switches are unreviewed env vars, and auto-retrain exports are
-    never pruned (threats S-5, T-10, I-9). Keep auto-retrain and the promo holdout off
+    served, the learning switches are env vars nobody approves (a change is audited and
+    alerted), and auto-retrain exports are never pruned (threats S-5, T-10, I-9). Keep auto-retrain and the promo holdout off
     until those close; the holdout also needs business and legal approval.
 
 ## Synthetic data is simulation, not evidence

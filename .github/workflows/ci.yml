@@ -36,6 +36,12 @@ jobs:
           git diff --exit-code contracts/openapi.json
       - name: Avro compatibility (EVT-004, BACKWARD_TRANSITIVE)
         run: .venv/bin/python scripts/check_avro_compat.py
+      - name: Alert rules (promtool check + unit tests)
+        run: |
+          for cmd in "check rules alerts.yml" "test rules alerts_test.yml"; do
+            docker run --rm -v "$PWD/deploy/prometheus:/w" -w /w --entrypoint promtool \
+              prom/prometheus:v2.55.1 $cmd
+          done
       # SDD 17.2 step 6-7: SAST, dependency scan, SBOM
       - name: SAST (bandit, medium+)
         run: uvx bandit -q -r rec -ll

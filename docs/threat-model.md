@@ -59,7 +59,7 @@ fraud detection.
 | T-7 | Training data poisoning through feedback, which now trains models (auto-retrain, online bandit) | B1, B5 | Feedback is accepted only from the customer it describes — **fixed here**: any signed-in staff role could write impressions and clicks for any customer, unaudited. Gates compare against the live baseline; automatic training reaches SHADOW at most; an Approver promotes; guardrail rollback. Residual: S-5 | `test_feedback_is_accepted_only_from_the_customer_it_describes`, `test_gates_block_a_model_that_loses_to_baseline_or_blows_the_budget`, `test_auto_trained_model_reaches_shadow_only_while_nothing_serves`, `test_guardrail_rolls_back_a_failing_live_model` | Partial |
 | T-8 | Event contract changed silently, consumers misread data | B3 | Avro contracts, `BACKWARD_TRANSITIVE` check against every committed version in CI; every produced message round-tripped through its schema | `tests/test_contracts.py`, `scripts/check_avro_compat.py` | Mitigated |
 | T-9 | Bandit model, watermark or contexts rewritten in Redis | B4 | The bandit never serves, so the worst case is misleading shadow numbers. State is JSON, not pickle: loading it cannot execute code. Integrity still needs Redis AUTH (T-6) | `test_state_round_trips_through_json_and_keeps_learning_identically` | Partial |
-| T-10 | Learning switches changed without review: `PROMO_HOLDOUT_PERCENT` moved mid-experiment (biased estimate, more customers without offers), auto-retrain or the bandit enabled | B6 | All off by default; holdout bounded to 0–99; each arm row records the split in force; the Pembelajaran page shows current values. They are env vars: not audited, no maker-checker | `test_holdout_is_deterministic_proportional_and_independent_of_canary`, `test_learning_status_reports_every_loop` | Open |
+| T-10 | Learning switches changed without review: `PROMO_HOLDOUT_PERCENT` moved mid-experiment (biased estimate, more customers without offers), auto-retrain or the bandit enabled | B6 | All off by default; holdout bounded to 0–99; each arm row records the split in force. A replica starting with new values writes an audit row (`system:config`, before/after), exports them as `learning_switch`, and `LearningSwitchChanged` raises a ticket; a split drifting from its setting raises `PromoHoldoutSampleRatioMismatch`. Still env vars: nobody approves a change before it ships | `test_learning_settings_are_exported_and_a_change_is_audited`, `deploy/prometheus/alerts_test.yml` | Partial |
 
 ## Repudiation
 
@@ -114,7 +114,8 @@ fraud detection.
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
 3. **T-4** — model artifacts are not integrity-checked between approval and load.
 4. **S-5 / T-10 / I-9** — live feedback is not bound to what was served, the learning
-   switches are unreviewed env vars, and training exports are never pruned. Keep
+   switches are env vars nobody approves (changes are audited and alerted), and training
+   exports are never pruned. Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
 5. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.
