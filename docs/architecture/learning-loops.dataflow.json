@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Learning Loops",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1070,
+      560
+    ],
+    "views": [
+      {
+        "id": "retrain",
+        "label": "Auto-retrain",
+        "focus": [
+          "api",
+          "feedback",
+          "retrain",
+          "registry",
+          "approver"
+        ],
+        "note": "Live feedback is exported and retrained through the same gates; people decide past SHADOW."
+      },
+      {
+        "id": "bandit",
+        "label": "Online bandit",
+        "focus": [
+          "api",
+          "ctx",
+          "feedback",
+          "bandit",
+          "shadow"
+        ],
+        "note": "Served vectors plus labels teach a UCB model that only ever runs in shadow."
+      },
+      {
+        "id": "uplift",
+        "label": "Promo uplift",
+        "focus": [
+          "api",
+          "arm",
+          "uplift",
+          "report",
+          "policy"
+        ],
+        "note": "A randomised promo holdout feeds a CausalML X-learner; acting on it is not built."
+      }
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "learning path"
+        },
+        "default": {
+          "label": "data"
+        },
+        "dashed": {
+          "label": "decision"
+        },
+        "security": {
+          "label": "gated"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Serve"
+    },
+    {
+      "label": "Captured"
+    },
+    {
+      "label": "Learners"
+    },
+    {
+      "label": "Outputs"
+    },
+    {
+      "label": "Decisions"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "serves, logs",
+      "stage": 0,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "ctx",
+      "type": "database",
+      "label": "Bandit contexts",
+      "sublabel": "Redis, 8-day TTL",
+      "brand": "redis",
+      "stage": 1,
+      "row": 0,
+      "width": 128
+    },
+    {
+      "id": "feedback",
+      "type": "database",
+      "label": "Feedback",
+      "sublabel": "impressions, clicks",
+      "brand": "postgresql",
+      "stage": 1,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "arm",
+      "type": "database",
+      "label": "Promo arm",
+      "sublabel": "promo_experiment",
+      "brand": "postgresql",
+      "stage": 1,
+      "row": 2,
+      "width": 128
+    },
+    {
+      "id": "bandit",
+      "type": "backend",
+      "label": "Online bandit",
+      "sublabel": "river UCB",
+      "tag": "shadow only",
+      "stage": 2,
+      "row": 0,
+      "width": 128
+    },
+    {
+      "id": "retrain",
+      "type": "backend",
+      "label": "Auto-retrain",
+      "sublabel": "live export, XGBoost",
+      "tag": "gated",
+      "stage": 2,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "uplift",
+      "type": "backend",
+      "label": "Uplift",
+      "sublabel": "CausalML X-learner",
+      "tag": "offline",
+      "stage": 2,
+      "row": 2,
+      "width": 128
+    },
+    {
+      "id": "shadow",
+      "type": "database",
+      "label": "Shadow rows",
+      "sublabel": "online-ucb order",
+      "stage": 3,
+      "row": 0,
+      "width": 128
+    },
+    {
+      "id": "registry",
+      "type": "database",
+      "label": "Model registry",
+      "sublabel": "SHADOW if idle",
+      "stage": 3,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "report",
+      "type": "external",
+      "label": "Uplift report",
+      "sublabel": "CATE, Qini",
+      "stage": 3,
+      "row": 2,
+      "width": 128
+    },
+    {
+      "id": "approver",
+      "type": "security",
+      "label": "Approver",
+      "sublabel": "CANARY / FULL",
+      "stage": 4,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "policy",
+      "type": "security",
+      "label": "Targeting policy",
+      "sublabel": "not built",
+      "stage": 4,
+      "row": 2,
+      "width": 128
+    }
+  ],
+  "flows": [
+    {
+      "from": "api",
+      "to": "ctx",
+      "label": "vectors",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          157
+        ]
+      ]
+    },
+    {
+      "from": "api",
+      "to": "feedback",
+      "label": "feedback",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "api",
+      "to": "arm",
+      "label": "first arm",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          100,
+          385
+        ]
+      ]
+    },
+    {
+      "from": "ctx",
+      "to": "bandit",
+      "label": "context",
+      "variant": "emphasis"
+    },
+    {
+      "from": "feedback",
+      "to": "bandit",
+      "label": "labels",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "via": [
+        [
+          315,
+          214
+        ],
+        [
+          530,
+          214
+        ]
+      ]
+    },
+    {
+      "from": "feedback",
+      "to": "retrain",
+      "label": "\u2265 N new",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "arm",
+      "to": "uplift",
+      "label": "+ purchases",
+      "variant": "emphasis"
+    },
+    {
+      "from": "bandit",
+      "to": "shadow",
+      "label": "its order",
+      "variant": "default"
+    },
+    {
+      "from": "retrain",
+      "to": "registry",
+      "label": "gates",
+      "variant": "security"
+    },
+    {
+      "from": "uplift",
+      "to": "report",
+      "label": "estimate",
+      "variant": "default"
+    },
+    {
+      "from": "registry",
+      "to": "approver",
+      "label": "promote",
+      "variant": "dashed"
+    },
+    {
+      "from": "report",
+      "to": "policy",
+      "label": "act?",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Auto-retrain (ADR-0007)",
+      "items": [
+        "Same builder, gates and registry as a manual job",
+        "System reaches SHADOW only; people decide the rest"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Online bandit (ADR-0007)",
+      "items": [
+        "Learns each impression once its window closes",
+        "Never serves; compared like a shadow model"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Uplift (ADR-0010)",
+      "items": [
+        "Holdout off by default; propensity is the split",
+        "Estimating is not acting: targeting needs its own ADR"
+      ]
+    }
+  ]
+}

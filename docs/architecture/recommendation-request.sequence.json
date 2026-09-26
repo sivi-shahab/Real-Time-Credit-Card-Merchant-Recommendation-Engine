@@ -40,7 +40,7 @@
           "ranking",
           "redis"
         ],
-        "note": "The model scores candidates; any failure degrades to the baseline order."
+        "note": "The model scores candidates; guardrail, shadow and bandit work happen off the latency path."
       }
     ],
     "legend": {
@@ -102,21 +102,21 @@
     },
     {
       "from": 210,
-      "to": 260,
+      "to": 232,
       "label": "Cache"
     },
     {
-      "from": 266,
-      "to": 316,
+      "from": 238,
+      "to": 288,
       "label": "Features + catalog"
     },
     {
-      "from": 322,
-      "to": 428,
+      "from": 294,
+      "to": 400,
       "label": "Rank"
     },
     {
-      "from": 434,
+      "from": 406,
       "to": 484,
       "label": "Respond"
     }
@@ -147,18 +147,10 @@
       "variant": "default"
     },
     {
-      "id": "cache-miss",
-      "from": "redis",
-      "to": "api",
-      "y": 249,
-      "label": "miss",
-      "variant": "return"
-    },
-    {
       "id": "features",
       "from": "api",
       "to": "redis",
-      "y": 277,
+      "y": 249,
       "label": "online features",
       "variant": "default"
     },
@@ -166,15 +158,15 @@
       "id": "catalog",
       "from": "api",
       "to": "pg",
-      "y": 305,
-      "label": "merchants, promos",
+      "y": 277,
+      "label": "merchants, promos*",
       "variant": "default"
     },
     {
       "id": "score",
       "from": "api",
       "to": "ranking",
-      "y": 333,
+      "y": 305,
       "label": "POST /v1/score",
       "variant": "emphasis"
     },
@@ -182,7 +174,7 @@
       "id": "scores",
       "from": "ranking",
       "to": "api",
-      "y": 361,
+      "y": 333,
       "label": "scores",
       "variant": "return"
     },
@@ -190,15 +182,15 @@
       "id": "guardrail",
       "from": "api",
       "to": "redis",
-      "y": 389,
-      "label": "guardrail stats",
+      "y": 361,
+      "label": "guardrail stats, bandit ctx",
       "variant": "dashed"
     },
     {
       "id": "shadow",
       "from": "api",
       "to": "ranking",
-      "y": 417,
+      "y": 389,
       "label": "shadow score",
       "variant": "dashed"
     },
@@ -206,9 +198,17 @@
       "id": "cache-put",
       "from": "api",
       "to": "redis",
-      "y": 445,
+      "y": 417,
       "label": "put cache",
       "variant": "dashed"
+    },
+    {
+      "id": "promo-arm",
+      "from": "api",
+      "to": "pg",
+      "label": "promo arm",
+      "variant": "dashed",
+      "y": 445
     },
     {
       "id": "response",
@@ -227,15 +227,9 @@
       "type": "backend"
     },
     {
-      "participant": "redis",
-      "from": 216,
-      "to": 255,
-      "type": "database"
-    },
-    {
       "participant": "ranking",
-      "from": 328,
-      "to": 367,
+      "from": 300,
+      "to": 339,
       "type": "backend"
     }
   ],
@@ -245,7 +239,7 @@
       "title": "Happy path",
       "items": [
         "Token must match the customer id (AC-006)",
-        "Cache key includes model + schema version; CANARY by customer hash"
+        "Cache hit: promos re-checked, source CACHE; key has model + holdout arm"
       ]
     },
     {
@@ -253,15 +247,15 @@
       "title": "Degrade, don't fail",
       "items": [
         "Ranking error or timeout: baseline order, FALLBACK",
-        "Redis or catalog down: popular merchants (SERV-003)"
+        "*Promo holdout customers get no offers; their arm is recorded"
       ]
     },
     {
       "dot": "rose",
-      "title": "Safety",
+      "title": "Learning, off the latency path",
       "items": [
-        "Promos re-validated even on a cache hit (AC-005)",
-        "Shadow scoring is fire-and-forget; guardrail drives rollback"
+        "Online bandit stores served vectors and records its own order",
+        "Shadow scoring and guardrail stats are fire-and-forget"
       ]
     }
   ]

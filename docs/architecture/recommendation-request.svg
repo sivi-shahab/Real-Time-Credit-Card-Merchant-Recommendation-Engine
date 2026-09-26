@@ -443,13 +443,13 @@ rect.c-bg-rect { fill: var(--bg); }
         <!-- Time Segments -->
         <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="0" x="48" y="150" width="984" height="54" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="1" x="48" y="210" width="984" height="50" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="1" x="48" y="210" width="984" height="22" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="266" width="984" height="50" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="2" x="48" y="238" width="984" height="50" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="3" x="48" y="322" width="984" height="106" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="3" x="48" y="294" width="984" height="106" rx="10" class="c-lane" stroke-width="1"/>
 
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="4" x="48" y="434" width="984" height="50" rx="10" class="c-lane" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="segment" data-composition-frame-id="4" x="48" y="406" width="984" height="78" rx="10" class="c-lane" stroke-width="1"/>
 
         <!-- Lifelines -->
         <path d="M 145.5 142 L 145.5 500" class="a-default" stroke-width="0.8" stroke-dasharray="3,7"/>
@@ -461,10 +461,8 @@ rect.c-bg-rect { fill: var(--bg); }
         <!-- Activations -->
         <rect x="343.25" y="165" width="10" height="314" rx="3" class="c-mask"/>
         <rect x="343.25" y="165" width="10" height="314" rx="3" class="c-backend" stroke-width="1"/>
-        <rect x="748.75" y="216" width="10" height="39" rx="3" class="c-mask"/>
-        <rect x="748.75" y="216" width="10" height="39" rx="3" class="c-database" stroke-width="1"/>
-        <rect x="951.5" y="328" width="10" height="39" rx="3" class="c-mask"/>
-        <rect x="951.5" y="328" width="10" height="39" rx="3" class="c-backend" stroke-width="1"/>
+        <rect x="951.5" y="300" width="10" height="39" rx="3" class="c-mask"/>
+        <rect x="951.5" y="300" width="10" height="39" rx="3" class="c-backend" stroke-width="1"/>
 
         <!-- Messages -->
         <g data-edge-from="client" data-edge-to="api" data-edge-label="GET /recommendations" data-edge-key="0" data-edge-id="request">
@@ -491,67 +489,67 @@ rect.c-bg-rect { fill: var(--bg); }
         </g>
         </g>
 
-        <g data-edge-from="redis" data-edge-to="api" data-edge-label="miss" data-edge-key="3" data-edge-id="cache-miss">
-          <path data-composition-edge-from="redis" data-composition-edge-to="api" data-composition-edge-id="cache-miss" data-composition-points="746.75,249;355.25,249" d="M 746.75 249 L 355.25 249" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="api" data-edge-to="redis" data-edge-label="online features" data-edge-key="3" data-edge-id="features">
+          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="features" data-composition-points="355.25,249;746.75,249" d="M 355.25 249 L 746.75 249" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="534" y="229" width="34" height="16" rx="3" class="c-mask"/>
-          <text x="551" y="239" class="t-muted" font-size="9" text-anchor="middle">miss</text>
+          <rect x="506" y="229" width="90" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="239" class="t-backend" font-size="9" text-anchor="middle">online features</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="redis" data-edge-label="online features" data-edge-key="4" data-edge-id="features">
-          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="features" data-composition-points="355.25,277;746.75,277" d="M 355.25 277 L 746.75 277" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="api" data-edge-to="pg" data-edge-label="merchants, promos*" data-edge-key="4" data-edge-id="catalog">
+          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="catalog" data-composition-points="355.25,277;544,277" d="M 355.25 277 L 544 277" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="506" y="257" width="90" height="16" rx="3" class="c-mask"/>
-          <text x="551" y="267" class="t-backend" font-size="9" text-anchor="middle">online features</text>
+          <rect x="396.825" y="257" width="105.60000000000001" height="16" rx="3" class="c-mask"/>
+          <text x="449.625" y="267" class="t-backend" font-size="9" text-anchor="middle">merchants, promos*</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="pg" data-edge-label="merchants, promos" data-edge-key="5" data-edge-id="catalog">
-          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="catalog" data-composition-points="355.25,305;544,305" d="M 355.25 305 L 544 305" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="api" data-edge-to="ranking" data-edge-label="POST /v1/score" data-edge-key="5" data-edge-id="score">
+          <path data-composition-edge-from="api" data-composition-edge-to="ranking" data-composition-edge-id="score" data-composition-points="355.25,305;949.5,305" d="M 355.25 305 L 949.5 305" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
-          <rect x="399.425" y="285" width="100.4" height="16" rx="3" class="c-mask"/>
-          <text x="449.625" y="295" class="t-backend" font-size="9" text-anchor="middle">merchants, promos</text>
+          <rect x="609.975" y="285" width="84.8" height="16" rx="3" class="c-mask"/>
+          <text x="652.375" y="295" class="t-backend" font-size="9" text-anchor="middle">POST /v1/score</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="ranking" data-edge-label="POST /v1/score" data-edge-key="6" data-edge-id="score">
-          <path data-composition-edge-from="api" data-composition-edge-to="ranking" data-composition-edge-id="score" data-composition-points="355.25,333;949.5,333" d="M 355.25 333 L 949.5 333" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
+        <g data-edge-from="ranking" data-edge-to="api" data-edge-label="scores" data-edge-key="6" data-edge-id="scores">
+          <path data-composition-edge-from="ranking" data-composition-edge-to="api" data-composition-edge-id="scores" data-composition-points="949.5,333;355.25,333" d="M 949.5 333 L 355.25 333" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="609.975" y="313" width="84.8" height="16" rx="3" class="c-mask"/>
-          <text x="652.375" y="323" class="t-backend" font-size="9" text-anchor="middle">POST /v1/score</text>
+          <rect x="630.775" y="313" width="43.2" height="16" rx="3" class="c-mask"/>
+          <text x="652.375" y="323" class="t-muted" font-size="9" text-anchor="middle">scores</text>
         </g>
         </g>
 
-        <g data-edge-from="ranking" data-edge-to="api" data-edge-label="scores" data-edge-key="7" data-edge-id="scores">
-          <path data-composition-edge-from="ranking" data-composition-edge-to="api" data-composition-edge-id="scores" data-composition-points="949.5,361;355.25,361" d="M 949.5 361 L 355.25 361" class="a-default" stroke-width="1.4" stroke-dasharray="3,5" marker-end="url(#arrowhead)"/>
+        <g data-edge-from="api" data-edge-to="redis" data-edge-label="guardrail stats, bandit ctx" data-edge-key="7" data-edge-id="guardrail">
+          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="guardrail" data-composition-points="355.25,361;746.75,361" d="M 355.25 361 L 746.75 361" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="630.775" y="341" width="43.2" height="16" rx="3" class="c-mask"/>
-          <text x="652.375" y="351" class="t-muted" font-size="9" text-anchor="middle">scores</text>
+          <rect x="474.8" y="341" width="152.4" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="351" class="t-messagebus" font-size="9" text-anchor="middle">guardrail stats, bandit ctx</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="redis" data-edge-label="guardrail stats" data-edge-key="8" data-edge-id="guardrail">
-          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="guardrail" data-composition-points="355.25,389;746.75,389" d="M 355.25 389 L 746.75 389" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="api" data-edge-to="ranking" data-edge-label="shadow score" data-edge-key="8" data-edge-id="shadow">
+          <path data-composition-edge-from="api" data-composition-edge-to="ranking" data-composition-edge-id="shadow" data-composition-points="355.25,389;949.5,389" d="M 355.25 389 L 949.5 389" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="506" y="369" width="90" height="16" rx="3" class="c-mask"/>
-          <text x="551" y="379" class="t-messagebus" font-size="9" text-anchor="middle">guardrail stats</text>
+          <rect x="615.175" y="369" width="74.4" height="16" rx="3" class="c-mask"/>
+          <text x="652.375" y="379" class="t-messagebus" font-size="9" text-anchor="middle">shadow score</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="ranking" data-edge-label="shadow score" data-edge-key="9" data-edge-id="shadow">
-          <path data-composition-edge-from="api" data-composition-edge-to="ranking" data-composition-edge-id="shadow" data-composition-points="355.25,417;949.5,417" d="M 355.25 417 L 949.5 417" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="api" data-edge-to="redis" data-edge-label="put cache" data-edge-key="9" data-edge-id="cache-put">
+          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="cache-put" data-composition-points="355.25,417;746.75,417" d="M 355.25 417 L 746.75 417" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="615.175" y="397" width="74.4" height="16" rx="3" class="c-mask"/>
-          <text x="652.375" y="407" class="t-messagebus" font-size="9" text-anchor="middle">shadow score</text>
+          <rect x="521.6" y="397" width="58.800000000000004" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="407" class="t-messagebus" font-size="9" text-anchor="middle">put cache</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="redis" data-edge-label="put cache" data-edge-key="10" data-edge-id="cache-put">
-          <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="cache-put" data-composition-points="355.25,445;746.75,445" d="M 355.25 445 L 746.75 445" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
+        <g data-edge-from="api" data-edge-to="pg" data-edge-label="promo arm" data-edge-key="10" data-edge-id="promo-arm">
+          <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="promo-arm" data-composition-points="355.25,445;544,445" d="M 355.25 445 L 544 445" class="a-dashed" stroke-width="1.4" marker-end="url(#arrowhead-dashed)"/>
         <g>
-          <rect x="521.6" y="425" width="58.800000000000004" height="16" rx="3" class="c-mask"/>
-          <text x="551" y="435" class="t-messagebus" font-size="9" text-anchor="middle">put cache</text>
+          <rect x="420.225" y="425" width="58.800000000000004" height="16" rx="3" class="c-mask"/>
+          <text x="449.625" y="435" class="t-messagebus" font-size="9" text-anchor="middle">promo arm</text>
         </g>
         </g>
 
@@ -573,16 +571,16 @@ rect.c-bg-rect { fill: var(--bg); }
           <text x="62" y="201" class="t-dim" font-size="9" font-weight="600">Cache</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="2">
-          <rect x="56" y="244" width="107.60000000000001" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="257" class="t-dim" font-size="9" font-weight="600">Features + catalog</text>
+          <rect x="56" y="216" width="107.60000000000001" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="229" class="t-dim" font-size="9" font-weight="600">Features + catalog</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="3">
-          <rect x="56" y="300" width="42" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="313" class="t-dim" font-size="9" font-weight="600">Rank</text>
+          <rect x="56" y="272" width="42" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="285" class="t-dim" font-size="9" font-weight="600">Rank</text>
         </g>
         <g data-graph-role="segment-label" data-segment-id="4">
-          <rect x="56" y="412" width="50.4" height="18" rx="3" class="c-mask"/>
-          <text x="62" y="425" class="t-dim" font-size="9" font-weight="600">Respond</text>
+          <rect x="56" y="384" width="50.4" height="18" rx="3" class="c-mask"/>
+          <text x="62" y="397" class="t-dim" font-size="9" font-weight="600">Respond</text>
         </g>
 
         <!-- Participants -->

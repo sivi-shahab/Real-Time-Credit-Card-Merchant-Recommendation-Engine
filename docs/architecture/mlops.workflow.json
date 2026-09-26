@@ -15,9 +15,10 @@
           "trainer",
           "gates",
           "mlflow",
-          "registry"
+          "registry",
+          "autoretrain"
         ],
-        "note": "A training job builds point-in-time data, trains, and records every run with its gates."
+        "note": "An engineer or the auto-retrain loop starts a job; every run is tracked and gated."
       },
       {
         "id": "promote",
@@ -28,7 +29,7 @@
           "api",
           "ranking"
         ],
-        "note": "Only gated models can be promoted, by a different person than the trainer."
+        "note": "The system may set an approved model to SHADOW while nothing serves; CANARY/FULL need an Approver."
       },
       {
         "id": "rollback",
@@ -123,7 +124,7 @@
       "col": 1,
       "type": "backend",
       "label": "Dataset Build",
-      "sublabel": "ledger replay + labels",
+      "sublabel": "files or live Postgres",
       "tag": "erased excluded",
       "width": 140
     },
@@ -133,8 +134,8 @@
       "col": 2,
       "type": "backend",
       "label": "XGBoost LTR",
-      "sublabel": "temporal split",
-      "tag": "vs baseline",
+      "sublabel": "unbiased LambdaMART",
+      "tag": "Optuna opt-in",
       "width": 140
     },
     {
@@ -200,6 +201,16 @@
       "label": "Auto Rollback",
       "sublabel": "previous or baseline",
       "tag": "audited",
+      "width": 140
+    },
+    {
+      "id": "autoretrain",
+      "lane": "run",
+      "col": 0,
+      "type": "security",
+      "label": "Auto-retrain",
+      "sublabel": "new impressions > N",
+      "tag": "system actor",
       "width": 140
     }
   ],
@@ -275,6 +286,14 @@
       "label": "breach",
       "variant": "security",
       "role": "error"
+    },
+    {
+      "id": "auto-job",
+      "from": "autoretrain",
+      "to": "dataset",
+      "label": "live export",
+      "variant": "dashed",
+      "role": "async"
     }
   ],
   "cards": [
@@ -282,16 +301,16 @@
       "dot": "cyan",
       "title": "Training",
       "items": [
-        "Same pure ledger as the stream, so features match serving",
-        "Every run logged to MLflow, pass or fail"
+        "Early stopping and Optuna use a validation slice, never the test side",
+        "Position-debiased; every run logged to MLflow, pass or fail"
       ]
     },
     {
       "dot": "amber",
       "title": "Promotion",
       "items": [
-        "Gates must pass; feature schema must match serving",
-        "Maker-checker: ML Engineer trains, Approver promotes"
+        "Auto-retrain reaches SHADOW only while no model serves",
+        "CANARY and FULL: gates pass and an Approver promotes"
       ]
     },
     {
@@ -299,7 +318,7 @@
       "title": "Rollback",
       "items": [
         "Guardrail per model version, one replica acts via Redis lock",
-        "Rollback invalidates cached recommendations"
+        "Rollback only restores a model that has served"
       ]
     }
   ]

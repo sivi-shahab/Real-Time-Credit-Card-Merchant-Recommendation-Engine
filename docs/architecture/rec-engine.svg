@@ -454,7 +454,7 @@ rect.c-bg-rect { fill: var(--bg); }
         <path data-edge-from="api" data-edge-to="keycloak" data-edge-label="OIDC" data-edge-key="7" data-edge-id="sso" data-composition-points="560,405;505,405;505,252;450,252" d="M 560 405 L 513 405 Q 505 405 505 397 L 505 260 Q 505 252 497 252 L 450 252" class="a-security" stroke-width="1.5" marker-end="url(#arrowhead-security)"/>
         <path data-edge-from="api" data-edge-to="ranking" data-edge-label="POST /score" data-edge-key="8" data-edge-id="score" data-composition-points="710,419;820,419" d="M 710 419 L 820 419" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
         <path data-edge-from="ranking" data-edge-to="models" data-edge-label="load" data-edge-key="9" data-edge-id="load-model" data-composition-points="970,412;1080,412" d="M 970 412 L 1080 412" class="a-default" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <path data-edge-from="api" data-edge-to="models" data-edge-label="train" data-edge-key="10" data-edge-id="train" data-composition-points="635,444;635,480;1155,480;1155,444" d="M 635 444 L 635 472 Q 635 480 643 480 L 1147 480 Q 1155 480 1155 472 L 1155 444" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
+        <path data-edge-from="api" data-edge-to="models" data-edge-label="train, auto" data-edge-key="10" data-edge-id="train" data-composition-points="635,444;635,480;1155,480;1155,444" d="M 635 444 L 635 472 Q 635 480 643 480 L 1147 480 Q 1155 480 1155 472 L 1155 444" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
         <g id="node-simulator" data-node-id="simulator" data-node-label="Replay Simulator" tabindex="0" role="button" aria-label="Focus Replay Simulator, rec.simulator, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="rec.simulator" data-node-context="Architecture component">
@@ -635,9 +635,9 @@ rect.c-bg-rect { fill: var(--bg); }
           <rect x="1010" y="392" width="30" height="14" rx="3" class="c-mask"/>
           <text x="1025" y="402" class="t-muted" font-size="8" text-anchor="middle">load</text>
         </g>
-        <g data-edge-from="api" data-edge-to="models" data-edge-label="train" data-edge-key="10" data-edge-id="train">
-          <rect x="878" y="460" width="34" height="14" rx="3" class="c-mask"/>
-          <text x="895" y="470" class="t-messagebus" font-size="8" text-anchor="middle">train</text>
+        <g data-edge-from="api" data-edge-to="models" data-edge-label="train, auto" data-edge-key="10" data-edge-id="train">
+          <rect x="863.6" y="460" width="62.8" height="14" rx="3" class="c-mask"/>
+          <text x="895" y="470" class="t-messagebus" font-size="8" text-anchor="middle">train, auto</text>
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->

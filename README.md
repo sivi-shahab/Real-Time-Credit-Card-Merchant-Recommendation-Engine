@@ -34,12 +34,21 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 </details>
 
 <details>
-<summary><b>MLOps in detail</b>: train, gate, promote, guardrail rollback</summary>
+<summary><b>MLOps in detail</b>: manual or automatic training, gates, promotion, rollback</summary>
 
 ![MLOps workflow](docs/architecture/mlops.svg)
 
 [Interactive](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/mlops.html)
 · spec: [mlops.workflow.json](docs/architecture/mlops.workflow.json)
+</details>
+
+<details>
+<summary><b>Learning loops</b>: auto-retrain, online bandit, promo uplift</summary>
+
+![Learning loops](docs/architecture/learning-loops.svg)
+
+[Interactive](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/learning-loops.html)
+· spec: [learning-loops.dataflow.json](docs/architecture/learning-loops.dataflow.json)
 </details>
 
 <details>

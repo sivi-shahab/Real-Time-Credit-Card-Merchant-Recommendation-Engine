@@ -13,7 +13,7 @@
       "url": "https://github.com/sivi-shahab/Real-Time-Credit-Card-Merchant-Recommendation-Engine",
       "provider": "github",
       "link_mode": "local-only",
-      "revision": "fd0cdaf0d1d17ddc294bfe15e435f4ca36271a1b"
+      "revision": "152060c666263368de9be8e1ede25c5438cd2b5e"
     },
     "views": [
       {
@@ -236,7 +236,7 @@
       "sources": [
         {
           "path": "rec/ml/train.py",
-          "line": 254
+          "line": 308
         },
         {
           "path": "rec/ml/registry.py"
@@ -315,7 +315,7 @@
       "id": "train",
       "from": "api",
       "to": "models",
-      "label": "train",
+      "label": "train, auto",
       "variant": "dashed",
       "fromSide": "bottom",
       "toSide": "bottom",
@@ -344,8 +344,8 @@
       "dot": "emerald",
       "title": "Serving",
       "items": [
-        "Candidates + promo eligibility from Redis and Postgres",
-        "Baseline or XGBoost LTR, shadow/canary rollout"
+        "Debiased XGBoost LTR, shadow/canary, promo holdout",
+        "Guardrail rollback; online bandit scores in shadow"
       ]
     },
     {

@@ -5,48 +5,254 @@
     "title": "Training Job",
     "locale": "en",
     "quality_profile": "showcase",
-    "viewBox": [1080, 565],
+    "viewBox": [
+      1080,
+      565
+    ],
     "column_fit": "spread",
     "views": [
-      { "id": "submit", "label": "Submit", "focus": ["console", "api", "pg"], "note": "An ML Engineer queues a job; the API answers 202 before any training runs." },
-      { "id": "train", "label": "Train", "focus": ["api", "trainer", "data", "mlflow"], "note": "A worker thread builds the dataset, trains, evaluates gates and logs to MLflow." },
-      { "id": "record", "label": "Record + notify", "focus": ["trainer", "api", "pg", "console"], "note": "The model and its gates land in the registry; the console hears it over SSE." }
+      {
+        "id": "submit",
+        "label": "Submit",
+        "focus": [
+          "console",
+          "api",
+          "pg"
+        ],
+        "note": "An ML Engineer queues a job; the API answers 202 before any training runs."
+      },
+      {
+        "id": "train",
+        "label": "Train",
+        "focus": [
+          "api",
+          "trainer",
+          "data",
+          "mlflow"
+        ],
+        "note": "A worker thread builds the dataset, trains, evaluates gates and logs to MLflow."
+      },
+      {
+        "id": "record",
+        "label": "Record + notify",
+        "focus": [
+          "trainer",
+          "api",
+          "pg",
+          "console"
+        ],
+        "note": "The model and its gates land in the registry; the console hears it over SSE."
+      }
     ],
-    "legend": { "entries": { "emphasis": { "label": "main request" }, "default": { "label": "call" }, "return": { "label": "response" }, "dashed": { "label": "async" } } }
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "main request"
+        },
+        "default": {
+          "label": "call"
+        },
+        "return": {
+          "label": "response"
+        },
+        "dashed": {
+          "label": "async"
+        }
+      }
+    }
   },
   "participants": [
-    { "id": "console", "type": "frontend", "label": "Ops Console", "sublabel": "ML Engineer" },
-    { "id": "api", "type": "backend", "label": "Recommendation API", "sublabel": "FastAPI :8000" },
-    { "id": "pg", "type": "database", "label": "PostgreSQL", "sublabel": "jobs, registry, audit", "brand": "postgresql" },
-    { "id": "trainer", "type": "backend", "label": "Trainer", "sublabel": "worker thread" },
-    { "id": "data", "type": "database", "label": "data/ volume", "sublabel": "datasets, models" },
-    { "id": "mlflow", "type": "database", "label": "MLflow", "sublabel": "tracking" }
+    {
+      "id": "console",
+      "type": "frontend",
+      "label": "Ops Console",
+      "sublabel": "ML Engineer"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "FastAPI :8000"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "jobs, registry, audit",
+      "brand": "postgresql"
+    },
+    {
+      "id": "trainer",
+      "type": "backend",
+      "label": "Trainer",
+      "sublabel": "worker thread"
+    },
+    {
+      "id": "data",
+      "type": "database",
+      "label": "data/ volume",
+      "sublabel": "datasets, models"
+    },
+    {
+      "id": "mlflow",
+      "type": "database",
+      "label": "MLflow",
+      "sublabel": "tracking"
+    }
   ],
   "messages": [
-    { "id": "submit", "from": "console", "to": "api", "y": 165, "label": "POST /training-jobs", "variant": "emphasis" },
-    { "id": "queue", "from": "api", "to": "pg", "y": 193, "label": "job QUEUED + audit", "variant": "default" },
-    { "id": "accepted", "from": "api", "to": "console", "y": 221, "label": "202 jobId", "variant": "return" },
-    { "id": "running", "from": "api", "to": "pg", "y": 249, "label": "RUNNING, erased ids", "variant": "default" },
-    { "id": "start", "from": "api", "to": "trainer", "y": 277, "label": "train()", "variant": "dashed" },
-    { "id": "read", "from": "trainer", "to": "data", "y": 305, "label": "read dataset", "variant": "default" },
-    { "id": "save", "from": "trainer", "to": "data", "y": 333, "label": "save model + metadata", "variant": "default" },
-    { "id": "log", "from": "trainer", "to": "mlflow", "y": 361, "label": "log run", "variant": "default" },
-    { "id": "result", "from": "trainer", "to": "api", "y": 389, "label": "result + gates", "variant": "return" },
-    { "id": "record", "from": "api", "to": "pg", "y": 417, "label": "record model, COMPLETED", "variant": "emphasis" },
-    { "id": "notify", "from": "api", "to": "console", "y": 445, "label": "SSE training.status", "variant": "dashed" }
+    {
+      "id": "submit",
+      "from": "console",
+      "to": "api",
+      "y": 165,
+      "label": "POST /training-jobs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "queue",
+      "from": "api",
+      "to": "pg",
+      "y": 193,
+      "label": "job QUEUED + audit",
+      "variant": "default"
+    },
+    {
+      "id": "accepted",
+      "from": "api",
+      "to": "console",
+      "y": 221,
+      "label": "202 jobId",
+      "variant": "return"
+    },
+    {
+      "id": "running",
+      "from": "api",
+      "to": "pg",
+      "y": 249,
+      "label": "RUNNING, erased ids",
+      "variant": "default"
+    },
+    {
+      "id": "start",
+      "from": "api",
+      "to": "trainer",
+      "y": 277,
+      "label": "train(tuneTrials)",
+      "variant": "dashed"
+    },
+    {
+      "id": "read",
+      "from": "trainer",
+      "to": "data",
+      "y": 305,
+      "label": "read dataset",
+      "variant": "default"
+    },
+    {
+      "id": "save",
+      "from": "trainer",
+      "to": "data",
+      "y": 333,
+      "label": "save model + metadata",
+      "variant": "default"
+    },
+    {
+      "id": "log",
+      "from": "trainer",
+      "to": "mlflow",
+      "y": 361,
+      "label": "log run + tuning",
+      "variant": "default"
+    },
+    {
+      "id": "result",
+      "from": "trainer",
+      "to": "api",
+      "y": 389,
+      "label": "result + gates",
+      "variant": "return"
+    },
+    {
+      "id": "record",
+      "from": "api",
+      "to": "pg",
+      "y": 417,
+      "label": "record model, COMPLETED",
+      "variant": "emphasis"
+    },
+    {
+      "id": "notify",
+      "from": "api",
+      "to": "console",
+      "y": 445,
+      "label": "SSE training.status",
+      "variant": "dashed"
+    },
+    {
+      "id": "autoshadow",
+      "from": "api",
+      "to": "pg",
+      "y": 473,
+      "label": "auto job: SHADOW if idle",
+      "variant": "dashed"
+    }
   ],
   "segments": [
-    { "from": 150, "to": 232, "label": "Submit" },
-    { "from": 238, "to": 400, "label": "Train" },
-    { "from": 406, "to": 456, "label": "Record + notify" }
+    {
+      "from": 150,
+      "to": 232,
+      "label": "Submit"
+    },
+    {
+      "from": 238,
+      "to": 400,
+      "label": "Train"
+    },
+    {
+      "from": 406,
+      "to": 484,
+      "label": "Record + notify"
+    }
   ],
   "activations": [
-    { "participant": "api", "from": 165, "to": 451, "type": "backend" },
-    { "participant": "trainer", "from": 277, "to": 395, "type": "backend" }
+    {
+      "participant": "api",
+      "from": 165,
+      "to": 479,
+      "type": "backend"
+    },
+    {
+      "participant": "trainer",
+      "from": 277,
+      "to": 395,
+      "type": "backend"
+    }
   ],
   "cards": [
-    { "dot": "cyan", "title": "Submit", "items": ["Needs training:run; Approvers cannot train", "Idempotency-Key returns the existing job"] },
-    { "dot": "emerald", "title": "Train", "items": ["Point-in-time dataset, erased customers excluded", "Temporal split, XGBoost LTR vs baseline, then gates"] },
-    { "dot": "rose", "title": "Outcome", "items": ["Failed gates still record the model, just not approved", "Any exception marks the job FAILED and is pushed over SSE"] }
+    {
+      "dot": "cyan",
+      "title": "Submit",
+      "items": [
+        "Needs training:run; Approvers cannot train",
+        "Auto-retrain queues the same job on a live export"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Train",
+      "items": [
+        "Validation slice for early stopping and Optuna",
+        "Test side only grades the gates"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Outcome",
+      "items": [
+        "Failed gates still record the model, not approved",
+        "Approved auto job goes to SHADOW if nothing serves"
+      ]
+    }
   ]
 }

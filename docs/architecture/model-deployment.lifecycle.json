@@ -20,7 +20,7 @@
           "canary",
           "full"
         ],
-        "note": "An Approver promotes a gated model; blast radius grows from shadow to full."
+        "note": "An Approver, or auto-retrain up to SHADOW, promotes a gated model; blast radius grows to full."
       },
       {
         "id": "refusal",
@@ -97,7 +97,7 @@
       "lane": "main",
       "col": 1,
       "step": "02",
-      "tag": "Approver"
+      "tag": "Approver or auto"
     },
     {
       "id": "shadow",
@@ -107,7 +107,7 @@
       "lane": "main",
       "col": 2,
       "step": "03",
-      "tag": "0% traffic"
+      "tag": "0% \u00b7 auto if idle"
     },
     {
       "id": "canary",
@@ -200,8 +200,8 @@
       "dot": "cyan",
       "title": "Promotion",
       "items": [
-        "Any mode can be targeted directly; the rail is the safe order",
-        "Every promote flushes cached recommendations (SERV-004)"
+        "An Approver may target any mode; the rail is the safe order",
+        "Auto-retrain may set SHADOW only from BASELINE or SHADOW"
       ]
     },
     {
@@ -216,8 +216,8 @@
       "dot": "rose",
       "title": "Rollback",
       "items": [
-        "Operators can roll back manually at any time",
-        "With a previous model, rollback returns it to FULL"
+        "Returns the last model that served, as FULL, else BASELINE",
+        "A shadow-only model is never restored by a rollback"
       ]
     }
   ]

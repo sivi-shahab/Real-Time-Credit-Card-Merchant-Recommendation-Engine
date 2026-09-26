@@ -510,19 +510,19 @@ rect.c-bg-rect { fill: var(--bg); }
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="pg" data-edge-label="txn: tombstone + delete" data-edge-key="6" data-edge-id="delete">
+        <g data-edge-from="api" data-edge-to="pg" data-edge-label="txn: tombstone + 6 tables" data-edge-key="6" data-edge-id="delete">
           <path data-composition-edge-from="api" data-composition-edge-to="pg" data-composition-edge-id="delete" data-composition-points="473.7,333;628.3,333" d="M 473.7 333 L 628.3 333" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
         <g>
-          <rect x="485.2" y="313" width="131.60000000000002" height="16" rx="3" class="c-mask"/>
-          <text x="551" y="323" class="t-backend" font-size="9" text-anchor="middle">txn: tombstone + delete</text>
+          <rect x="480" y="313" width="142" height="16" rx="3" class="c-mask"/>
+          <text x="551" y="323" class="t-backend" font-size="9" text-anchor="middle">txn: tombstone + 6 tables</text>
         </g>
         </g>
 
-        <g data-edge-from="api" data-edge-to="redis" data-edge-label="delete state + cache" data-edge-key="7" data-edge-id="purge">
+        <g data-edge-from="api" data-edge-to="redis" data-edge-label="state, cache, bandit ctx" data-edge-key="7" data-edge-id="purge">
           <path data-composition-edge-from="api" data-composition-edge-to="redis" data-composition-edge-id="purge" data-composition-points="473.7,361;796.9,361" d="M 473.7 361 L 796.9 361" class="a-default" stroke-width="1.4" marker-end="url(#arrowhead)"/>
         <g>
-          <rect x="577.3" y="341" width="116" height="16" rx="3" class="c-mask"/>
-          <text x="635.3" y="351" class="t-backend" font-size="9" text-anchor="middle">delete state + cache</text>
+          <rect x="566.9" y="341" width="136.8" height="16" rx="3" class="c-mask"/>
+          <text x="635.3" y="351" class="t-backend" font-size="9" text-anchor="middle">state, cache, bandit ctx</text>
         </g>
         </g>
 
