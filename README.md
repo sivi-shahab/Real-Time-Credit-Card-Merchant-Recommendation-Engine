@@ -60,6 +60,15 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 · spec: [model-deployment.lifecycle.json](docs/architecture/model-deployment.lifecycle.json)
 </details>
 
+<details>
+<summary><b>Training job</b>: sequence from submit to registry record and SSE status</summary>
+
+![Training job sequence](docs/architecture/training-job.svg)
+
+[Interactive](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/training-job.html)
+· spec: [training-job.sequence.json](docs/architecture/training-job.sequence.json)
+</details>
+
 ## Run it
 
 ```bash
@@ -139,7 +148,7 @@ scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
                    rebuild_state.py, loadtest.py, export_openapi.py
 deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
-docs/architecture/ archify diagrams (system, ingestion, MLOps, request, deployment): spec, SVG, HTML
+docs/architecture/ archify diagrams (system, ingestion, MLOps, request, deployment, training): spec, SVG, HTML
 docs/runbooks.md   one section per alert, plus restore, erasure, key rotation
 docs/release-gate.md  Fase 5 evidence pack and sign-off
 docs/threat-model.md  STRIDE per trust boundary, with evidence and open risks
