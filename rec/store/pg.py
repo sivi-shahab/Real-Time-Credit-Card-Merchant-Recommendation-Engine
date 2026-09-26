@@ -91,19 +91,39 @@ async def merchants(city_code: str | None = None, search: str | None = None,
     return [_merchant(r) for r in rows]
 
 
+_catalog: tuple[int, list[Merchant], dict[str, str], list[Promotion]] | None = None
+
+
+async def catalog() -> tuple[list[Merchant], dict[str, str], list[Promotion]]:
+    """Every merchant, each one's city, and every promotion, for serving. Re-read only
+    when a write to `merchants` or `promotions` (redemptions included) has bumped
+    `catalog_version` (trigger): parsing all of it on every request was most of a live
+    request's cost. Promotion windows are still checked per request (`active_at`).
+    Callers must not mutate what it returns."""
+    global _catalog
+    p = await pool()
+    # version first: a write landing between the reads only causes one more reload
+    version = await p.fetchval("SELECT version FROM catalog_version WHERE id = 1")
+    if _catalog is None or _catalog[0] != version:
+        merchants_ = [_merchant(r) for r in
+                      await p.fetch("SELECT * FROM merchants ORDER BY merchant_id")]
+        promotions_ = [_promotion(r) for r in
+                       await p.fetch("SELECT * FROM promotions ORDER BY promotion_id")]
+        _catalog = (version, merchants_, {m.merchantId: m.cityCode for m in merchants_},
+                    promotions_)
+    return _catalog[1], _catalog[2], _catalog[3]
+
+
+def active_at(promotions_: list[Promotion], now: datetime) -> list[Promotion]:
+    """Active and inside its window at `now` (AC-005)."""
+    return [p for p in promotions_
+            if p.status == "ACTIVE" and p.startsAt <= now <= p.endsAt]
+
+
 async def merchant_city_map() -> dict[str, str]:
     p = await pool()
     return {r["merchant_id"]: r["city_code"] for r in await p.fetch(
         "SELECT merchant_id, city_code FROM merchants")}
-
-
-async def active_promotions(now: datetime) -> list[Promotion]:
-    p = await pool()
-    rows = await p.fetch(
-        """SELECT * FROM promotions
-           WHERE status = 'ACTIVE' AND starts_at <= $1 AND ends_at >= $1
-           ORDER BY promotion_id""", now)
-    return [_promotion(r) for r in rows]
 
 
 async def active_promotion_merchants(now: datetime) -> set[str]:

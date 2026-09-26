@@ -20,6 +20,10 @@ Recommendation p95 > 200 ms for 10 min.
 2. Check `ranking_inference_seconds` and the guardrail status
    (`GET /admin/v1/models/guardrail/status`). If the model arm is slow, roll back (below).
 3. Check Postgres (`pg_stat_activity`) and Redis latency; the serving path reads both.
+4. CPU-bound API processes: raise `WEB_CONCURRENCY` (uvicorn workers per container) up to
+   the cores it has, or add replicas. Keep `WEB_CONCURRENCY x PG_MAX_CONNECTIONS` plus the
+   stream and worker pools under Postgres `max_connections`. With more than one worker,
+   `PROMETHEUS_MULTIPROC_DIR` must be set or `/metrics` shows one worker's counts.
 
 ## fallback-rate
 More than 5% of responses are `FALLBACK`.

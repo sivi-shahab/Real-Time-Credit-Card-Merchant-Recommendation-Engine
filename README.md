@@ -126,6 +126,8 @@ bash scripts/chaos.sh         # Redis loss, ranking loss, consumer SIGKILL + bro
 bash scripts/dr_drill.sh      # backup, destroy, restore, rebuild Redis, verify identical
 python scripts/loadtest.py api --concurrency 8 --seconds 30   # latency/throughput
 ```
+`loadtest.py api` is one Python process and tops out near 150 rps; above 8 clients use
+`ab`/k6 or the generator becomes what you measure.
 The scripts call `python3`; run them with the venv active (or `.venv/bin` on `PATH`).
 
 `smoke_e2e.sh` fails loudly if online aggregates diverge from an offline recomputation

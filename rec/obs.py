@@ -76,7 +76,8 @@ INFERENCE_LATENCY = Histogram("ranking_inference_seconds", "Model predict time",
 
 # Learning loops (ADR-0007, ADR-0010); alerts in deploy/prometheus/alerts.yml.
 LEARNING_SWITCH = Gauge("learning_switch", "Learning settings in force on this replica",
-                        ["name"])
+                        ["name"],
+                        multiprocess_mode="mostrecent")
 AUTO_RETRAIN_RUNS = Counter("auto_retrain_runs_total", "Auto-retrain evaluations",
                             ["outcome"])  # queued | below_threshold | locked | failed
 TRAINING_JOBS = Counter("training_jobs_total", "Training jobs finished",

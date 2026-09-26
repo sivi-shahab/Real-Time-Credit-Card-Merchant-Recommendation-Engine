@@ -174,8 +174,8 @@ async def recommend(
         await store.incr_metric("recommendation_cache_miss")
 
     with stage("features"):
+        catalog, merchant_city, all_promos = await pg.catalog()
         if customer.personalizationAllowed:
-            merchant_city = await pg.merchant_city_map()
             features = await store.features(customer_id, now, merchant_city)
         else:
             # CAND-003: no behavioural features when personalisation is refused
@@ -183,8 +183,9 @@ async def recommend(
                         "featureAsOf": now.isoformat(), "personalizationAllowed": False}
 
     with stage("catalog"):
-        merchants = await pg.merchants()
-        promos = await pg.active_promotions(now)
+        merchants = catalog
+        # AC-005: the snapshot is current (versioned); the window is checked at `now`
+        promos = pg.active_at(all_promos, now)
         redemptions = await pg.customer_redemption_counts(customer_id)
 
     by_merchant = {m.merchantId: m for m in merchants}
@@ -328,7 +329,7 @@ async def recommend_safe(store: OnlineStore, customer_id: str, **kwargs):
         kwargs.pop("explain", None)
         now = kwargs.get("now") or datetime.now(UTC)
         try:
-            catalog = await pg.merchants()
+            catalog, _, _ = await pg.catalog()
         except Exception:  # noqa: BLE001 - SERV-003 step 4: no safe candidates -> empty
             catalog = []
         merchants = sorted(

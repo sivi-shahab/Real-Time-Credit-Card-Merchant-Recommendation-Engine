@@ -1,5 +1,21 @@
 name: rec-engine
 
+x-backend-env: &backend_env
+  KAFKA_BOOTSTRAP: kafka:9092
+  REDIS_URL: redis://redis:6379/0
+  POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
+  DATA_DIR: /app/data
+  ENVIRONMENT: local
+  MODEL_DIR: /app/data/models
+  MLFLOW_TRACKING_URI: sqlite:////app/data/mlflow.db
+  RANKING_SERVICE_URL: http://ranking:8100
+  # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
+  COOKIE_SECURE: "false"
+  OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
+  OIDC_CLIENT_ID: rec-dashboard
+  OIDC_CLIENT_SECRET: local-dev-secret-change-me
+  OIDC_REDIRECT_URI: http://localhost:5173/bff/callback
+
 services:
   kafka:
     image: apache/kafka:3.9.0
@@ -52,22 +68,15 @@ services:
 
   api:
     build: .
-    command: uvicorn rec.api.app:app --host 0.0.0.0 --port 8000
-    environment: &backend_env
-      KAFKA_BOOTSTRAP: kafka:9092
-      REDIS_URL: redis://redis:6379/0
-      POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
-      DATA_DIR: /app/data
-      ENVIRONMENT: local
-      MODEL_DIR: /app/data/models
-      MLFLOW_TRACKING_URI: sqlite:////app/data/mlflow.db
-      RANKING_SERVICE_URL: http://ranking:8100
-      # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
-      COOKIE_SECURE: "false"
-      OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
-      OIDC_CLIENT_ID: rec-dashboard
-      OIDC_CLIENT_SECRET: local-dev-secret-change-me
-      OIDC_REDIRECT_URI: http://localhost:5173/bff/callback
+    # no command: the image's, uvicorn with $WEB_CONCURRENCY workers (Dockerfile)
+    environment:
+      <<: *backend_env
+      # p95 < 200 ms at 32 concurrent clients, cache misses included, took 8 processes on
+      # a 16-core host (release gate). Size to the cores the API gets.
+      WEB_CONCURRENCY: "8"
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      # per worker: 8 x 6, plus stream and worker (20 each), stays under Postgres's 100
+      PG_MAX_CONNECTIONS: "6"
     ports: ["8000:8000"]
     volumes: ["./data:/app/data"]
     depends_on:

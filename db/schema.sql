@@ -12,6 +12,24 @@ CREATE TABLE IF NOT EXISTS merchants (
 );
 CREATE INDEX IF NOT EXISTS merchants_city_cat ON merchants (city_code, category_code);
 
+-- Serving keeps merchants and promotions in memory and re-reads them only when this
+-- changes. A trigger, not application code, so a change made any way (API, master-data
+-- load, redemption, SQL) reaches every API worker on its next request.
+CREATE TABLE IF NOT EXISTS catalog_version (
+  id      INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  version BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO catalog_version (id, version) VALUES (1, 0) ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION bump_catalog_version() RETURNS trigger AS $$
+BEGIN
+  UPDATE catalog_version SET version = version + 1 WHERE id = 1;
+  RETURN NULL;
+END $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS merchants_catalog_version ON merchants;
+CREATE TRIGGER merchants_catalog_version
+  AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON merchants
+  FOR EACH STATEMENT EXECUTE FUNCTION bump_catalog_version();
+
 CREATE TABLE IF NOT EXISTS promotions (
   promotion_id        TEXT PRIMARY KEY,
   merchant_id         TEXT NOT NULL REFERENCES merchants(merchant_id),
@@ -31,6 +49,10 @@ CREATE TABLE IF NOT EXISTS promotions (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   CHECK (ends_at > starts_at)
 );
+DROP TRIGGER IF EXISTS promotions_catalog_version ON promotions;
+CREATE TRIGGER promotions_catalog_version
+  AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE ON promotions
+  FOR EACH STATEMENT EXECUTE FUNCTION bump_catalog_version();
 CREATE INDEX IF NOT EXISTS promotions_merchant ON promotions (merchant_id, status);
 
 CREATE TABLE IF NOT EXISTS customers (

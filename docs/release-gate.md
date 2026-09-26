@@ -58,15 +58,15 @@ host, not the design. Raw results: `docs/perf/results.jsonl`.
 
 | Target | Result | Status |
 |---|---|---|
-| API p95 < 200 ms | 8 concurrent clients: 162 rps, p50 46 ms, **p95 72 ms**, 0 errors. 32 clients: p95 1 s (host saturated, one uvicorn worker) | PARTIAL |
+| API p95 < 200 ms | 32 concurrent clients, 8 uvicorn workers (`WEB_CONCURRENCY`), `ab` on a 16-core host: cache hits **p95 101–168 ms** (515–1520 rps), every request a cache miss (`refresh=true`) **p95 145–173 ms** (335–390 rps), 0 errors. One worker: p95 260–460 ms cached, 600–1100 ms uncached. The earlier "p95 1 s" was mostly the load generator: `scripts/loadtest.py api` is one Python process and saturates a core near 150 rps. A cache miss used to parse the whole merchant catalog and every promotion (and saw only the first 1000 merchants of 1170); they are now held per process, re-read when a trigger bumps `catalog_version`, with promotion windows still checked per request (AC-005): 52 → 14–24 ms CPU | PASS |
 | Ingestion 10 000 TPS steady / 20 000 burst | **~220 events/s** per consumer process on this host (`scripts/loadtest.py ingest`). The consumer is CPU-bound, not Redis-bound: 12–14 s of CPU in a 14–16 s run, Redis at <1% CPU, ~1 ms RTT. The cost is spread over asyncio and the redis-py client, with no single hotspot; hiredis and uvloop each gave <10%. Redis round trips per event cut from 5 to 2 (one pipeline to admit, one transaction to save and invalidate), +10–15% here, more where Redis is across a network. 10k TPS needs about 45 consumer processes across ≥45 partitions (local topic: 6), or a hot path outside Python | OPEN |
 | On-demand ranking p95 < 500 ms | guardrail enforces it live (p95 bucket, auto-rollback); in-process predict 0.7 ms p95 | PARTIAL |
 
 What changed in Fase 5: transaction log batched per consumer batch; cache-hit path no
 longer parses every active promotion; asyncpg reset round trip removed; responses
 serialised by pydantic-core (API in-process cost 22 ms → 12 ms per request).
-To close: run `scripts/loadtest.py` on representative hardware with multiple API replicas
-and one consumer per partition (6), and a real Kafka load generator.
+To close: run on representative hardware with one consumer per partition, a real Kafka
+load generator, and an HTTP load generator that is not itself the bottleneck (`ab`, k6).
 
 ## Recovery
 

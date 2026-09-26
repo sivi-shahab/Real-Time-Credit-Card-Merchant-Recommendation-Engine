@@ -1425,3 +1425,36 @@ async def test_an_ingested_event_drops_the_customers_cached_recommendations(clie
     assert await processor.handle(stranger, now=REF + timedelta(hours=1)) == "UNKNOWN_CUSTOMER"
     assert not await store.r.exists("evt:" + stranger["eventId"]), \
         "a DLQ replay after the customer is created must not be a DUPLICATE_EVENT"
+
+
+async def test_live_serving_sees_catalog_changes_made_any_way(client, replayed):
+    """The in-memory catalog is versioned by a trigger: a change made with plain SQL is
+    served on the next request (merchant status, promotion quota), and nothing is cut."""
+    from rec.api import service
+
+    conn = await pg.pool()
+    merchants, _, _ = await pg.catalog()
+    assert len(merchants) == await conn.fetchval("SELECT count(*) FROM merchants")
+
+    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
+    served, _ = await service.recommend(store, cid, limit=20, use_cache=False)
+    mid = served.recommendations[0].merchantId
+    await conn.execute("UPDATE merchants SET status='INACTIVE' WHERE merchant_id=$1", mid)
+    try:
+        again, _ = await service.recommend(store, cid, limit=20, use_cache=False)
+        assert mid not in [x.merchantId for x in again.recommendations]
+    finally:
+        await conn.execute("UPDATE merchants SET status='ACTIVE' WHERE merchant_id=$1", mid)
+
+    promoted = next((x for x in again.recommendations if x.promotion), None)
+    assert promoted is not None, "the test dataset offers this customer a promotion"
+    await conn.execute("UPDATE promotions SET quota_used = campaign_quota "
+                       "WHERE merchant_id=$1 AND campaign_quota > 0", promoted.merchantId)
+    try:
+        exhausted, _ = await service.recommend(store, cid, limit=20, use_cache=False)
+        item = next((x for x in exhausted.recommendations
+                     if x.merchantId == promoted.merchantId), None)
+        assert item is None or item.promotion is None
+    finally:
+        await conn.execute("UPDATE promotions SET quota_used = 0 WHERE merchant_id=$1",
+                           promoted.merchantId)
