@@ -1,0 +1,268 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Recommendation Request",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      565
+    ],
+    "column_fit": "spread",
+    "views": [
+      {
+        "id": "context",
+        "label": "Auth + context",
+        "focus": [
+          "client",
+          "api",
+          "pg",
+          "redis"
+        ],
+        "note": "Token checked against the customer id; deployment mode picks the ranker and cache key."
+      },
+      {
+        "id": "candidates",
+        "label": "Features + candidates",
+        "focus": [
+          "api",
+          "redis",
+          "pg"
+        ],
+        "note": "Online features from Redis, catalog and promo eligibility from Postgres."
+      },
+      {
+        "id": "ranking",
+        "label": "Ranking + guardrail",
+        "focus": [
+          "api",
+          "ranking",
+          "redis"
+        ],
+        "note": "The model scores candidates; any failure degrades to the baseline order."
+      }
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "main request"
+        },
+        "default": {
+          "label": "call"
+        },
+        "return": {
+          "label": "response"
+        },
+        "dashed": {
+          "label": "async"
+        }
+      }
+    }
+  },
+  "participants": [
+    {
+      "id": "client",
+      "type": "frontend",
+      "label": "Customer App",
+      "sublabel": "cust-<id> token"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "FastAPI :8000"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "customer, catalog",
+      "brand": "postgresql"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "features, cache",
+      "brand": "redis"
+    },
+    {
+      "id": "ranking",
+      "type": "backend",
+      "label": "Ranking Service",
+      "sublabel": "XGBoost :8100"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 204,
+      "label": "Auth + context"
+    },
+    {
+      "from": 210,
+      "to": 260,
+      "label": "Cache"
+    },
+    {
+      "from": 266,
+      "to": 316,
+      "label": "Features + catalog"
+    },
+    {
+      "from": 322,
+      "to": 428,
+      "label": "Rank"
+    },
+    {
+      "from": 434,
+      "to": 484,
+      "label": "Respond"
+    }
+  ],
+  "messages": [
+    {
+      "id": "request",
+      "from": "client",
+      "to": "api",
+      "y": 165,
+      "label": "GET /recommendations",
+      "variant": "emphasis"
+    },
+    {
+      "id": "customer",
+      "from": "api",
+      "to": "pg",
+      "y": 193,
+      "label": "customer + deployment",
+      "variant": "default"
+    },
+    {
+      "id": "cache-get",
+      "from": "api",
+      "to": "redis",
+      "y": 221,
+      "label": "get cache",
+      "variant": "default"
+    },
+    {
+      "id": "cache-miss",
+      "from": "redis",
+      "to": "api",
+      "y": 249,
+      "label": "miss",
+      "variant": "return"
+    },
+    {
+      "id": "features",
+      "from": "api",
+      "to": "redis",
+      "y": 277,
+      "label": "online features",
+      "variant": "default"
+    },
+    {
+      "id": "catalog",
+      "from": "api",
+      "to": "pg",
+      "y": 305,
+      "label": "merchants, promos",
+      "variant": "default"
+    },
+    {
+      "id": "score",
+      "from": "api",
+      "to": "ranking",
+      "y": 333,
+      "label": "POST /v1/score",
+      "variant": "emphasis"
+    },
+    {
+      "id": "scores",
+      "from": "ranking",
+      "to": "api",
+      "y": 361,
+      "label": "scores",
+      "variant": "return"
+    },
+    {
+      "id": "guardrail",
+      "from": "api",
+      "to": "redis",
+      "y": 389,
+      "label": "guardrail stats",
+      "variant": "dashed"
+    },
+    {
+      "id": "shadow",
+      "from": "api",
+      "to": "ranking",
+      "y": 417,
+      "label": "shadow score",
+      "variant": "dashed"
+    },
+    {
+      "id": "cache-put",
+      "from": "api",
+      "to": "redis",
+      "y": 445,
+      "label": "put cache",
+      "variant": "dashed"
+    },
+    {
+      "id": "response",
+      "from": "api",
+      "to": "client",
+      "y": 473,
+      "label": "200 recommendations",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "api",
+      "from": 165,
+      "to": 479,
+      "type": "backend"
+    },
+    {
+      "participant": "redis",
+      "from": 216,
+      "to": 255,
+      "type": "database"
+    },
+    {
+      "participant": "ranking",
+      "from": 328,
+      "to": 367,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Happy path",
+      "items": [
+        "Token must match the customer id (AC-006)",
+        "Cache key includes model + schema version; CANARY by customer hash"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Degrade, don't fail",
+      "items": [
+        "Ranking error or timeout: baseline order, FALLBACK",
+        "Redis or catalog down: popular merchants (SERV-003)"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Safety",
+      "items": [
+        "Promos re-validated even on a cache hit (AC-005)",
+        "Shadow scoring is fire-and-forget; guardrail drives rollback"
+      ]
+    }
+  ]
+}
