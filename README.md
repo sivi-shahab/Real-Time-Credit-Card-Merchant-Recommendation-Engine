@@ -15,10 +15,13 @@ aiokafka) instead of Spring Boot + Kafka Streams. Kafka, the event envelope, the
 names, the feature schema and the REST contract are as specified, so a service can be
 re-implemented on the JVM behind the same contract.
 
-Architecture diagram: [docs/architecture/rec-engine.html](docs/architecture/rec-engine.html)
-(interactive; open it locally in a browser, since GitHub shows HTML as source). It is
-generated with archify from
-[rec-engine.architecture.json](docs/architecture/rec-engine.architecture.json).
+![Architecture](docs/architecture/rec-engine.svg)
+
+Interactive version: [docs/architecture/rec-engine.html](docs/architecture/rec-engine.html)
+(open it locally in a browser, since GitHub shows HTML as source). Both are generated
+with archify from
+[rec-engine.architecture.json](docs/architecture/rec-engine.architecture.json); after
+editing the spec, re-run `deliver` and re-export the SVG from the viewer's Export menu.
 
 ## Run it
 
@@ -99,7 +102,7 @@ scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
                    rebuild_state.py, loadtest.py, export_openapi.py
 deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
-docs/architecture/ archify diagram (HTML) and the JSON spec it is generated from
+docs/architecture/ archify diagram (SVG + interactive HTML) and its JSON spec
 docs/runbooks.md   one section per alert, plus restore, erasure, key rotation
 docs/release-gate.md  Fase 5 evidence pack and sign-off
 docs/threat-model.md  STRIDE per trust boundary, with evidence and open risks
