@@ -954,6 +954,116 @@ async def test_learning_settings_are_exported_and_a_change_is_audited(monkeypatc
     assert _metric("learning_switch", name="promo_holdout_percent") == holdout
 
 
+@pytest_asyncio.fixture(loop_scope="session")
+async def learning_state(monkeypatch):
+    """Approved learning settings are applied to the shared settings object; put every
+    switch back and clear the maker-checker tables afterwards."""
+    from rec.api import learning_settings
+
+    for name in learning_settings.NAMES:
+        monkeypatch.setattr(settings, name, getattr(settings, name))
+    conn = await pg.pool()
+    yield conn
+    await conn.execute("DELETE FROM learning_setting_requests")
+    await conn.execute("DELETE FROM learning_settings")
+    learning_settings._applied_version = None
+
+
+async def test_learning_settings_change_needs_a_second_person(client, replayed, learning_state):
+    """ADR-0011 / T-10: an ML Engineer files, an Approver decides; the change applies
+    without a restart and is audited with before and after."""
+    from rec.api.app import record_learning_config
+
+    conn = learning_state
+    monkeypatch_before = settings.promo_holdout_percent
+    filed = await client.post("/admin/v1/learning/settings/requests", headers=ML, json={
+        "changes": {"promo_holdout_percent": 5, "online_bandit_enabled": True},
+        "reason": "Start the Q4 promo uplift experiment"})
+    assert filed.status_code == 201
+    rid = filed.json()["requestId"]
+    assert (await client.post("/admin/v1/learning/settings/requests", headers=ML, json={
+        "changes": {"auto_retrain_keep_exports": 5}, "reason": "second one"})).status_code == 409
+    assert settings.promo_holdout_percent == monkeypatch_before  # nothing applied yet
+    assert (await client.post(f"/admin/v1/learning/settings/requests/{rid}/decision",
+                              headers=ML, json={"approve": True})).status_code == 403
+
+    done = await client.post(f"/admin/v1/learning/settings/requests/{rid}/decision",
+                             headers=APPROVER, json={"approve": True, "note": "legal ok"})
+    assert done.status_code == 200 and done.json()["status"] == "APPROVED"
+    assert settings.promo_holdout_percent == 5 and settings.online_bandit_enabled is True
+    view = (await client.get("/admin/v1/learning/settings", headers=ANALYST)).json()
+    assert view["source"] == "approved" and view["effective"]["promo_holdout_percent"] == 5
+    assert view["requests"][0]["status"] == "APPROVED"
+    row = await conn.fetchrow(
+        """SELECT actor, changes FROM audit_events WHERE action = 'config.learning'
+           ORDER BY id DESC LIMIT 1""")
+    change = json.loads(row["changes"])
+    assert row["actor"] == "approver" and change["after"]["promo_holdout_percent"] == 5
+    assert change["requestedBy"] == "mlops"
+    assert await record_learning_config() is None  # a restart finds nothing to report
+    assert (await client.post(f"/admin/v1/learning/settings/requests/{rid}/decision",
+                              headers=APPROVER, json={"approve": True})).status_code == 409
+
+
+async def test_rejected_or_invalid_learning_changes_apply_nothing(client, replayed,
+                                                                  learning_state):
+    before = settings.promo_holdout_percent
+    for changes in ({"promo_holdout_percent": 100}, {"auto_retrain_keep_exports": 0},
+                    {"guardrail_max_p95_ms": 5000}, {}):
+        r = await client.post("/admin/v1/learning/settings/requests", headers=ML,
+                              json={"changes": changes, "reason": "try it"})
+        assert r.status_code == 422, changes
+    filed = await client.post("/admin/v1/learning/settings/requests", headers=ADMIN,
+                              json={"changes": {"promo_holdout_percent": 30},
+                                    "reason": "bigger holdout"})
+    rid = filed.json()["requestId"]
+    rejected = await client.post(f"/admin/v1/learning/settings/requests/{rid}/decision",
+                                 headers=APPROVER, json={"approve": False, "note": "too big"})
+    assert rejected.json()["status"] == "REJECTED"
+    assert settings.promo_holdout_percent == before
+
+
+async def test_env_cannot_move_a_switch_past_an_approved_value(client, replayed,
+                                                               learning_state):
+    """Once a change is approved the stored full set wins: a deploy that sets a different
+    env value is overridden on start (refresh with force), not obeyed."""
+    from rec.api import learning_settings
+
+    filed = await client.post("/admin/v1/learning/settings/requests", headers=ML, json={
+        "changes": {"auto_retrain_keep_exports": 4}, "reason": "keep one more"})
+    await client.post(f"/admin/v1/learning/settings/requests/{filed.json()['requestId']}"
+                      "/decision", headers=APPROVER, json={"approve": True})
+    stored_holdout = settings.promo_holdout_percent
+    settings.promo_holdout_percent = 42     # as a new deploy's env would set it
+    settings.auto_retrain_keep_exports = 9
+    assert await learning_settings.refresh(force=True)
+    assert settings.promo_holdout_percent == stored_holdout
+    assert settings.auto_retrain_keep_exports == 4
+
+
+async def test_auto_retrain_loop_follows_its_switch_at_runtime(monkeypatch):
+    from rec.api import auto_retrain
+
+    calls, sleeps = [], []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:   # switched on between the two turns
+            monkeypatch.setattr(settings, "auto_retrain_interval_hours", 2.0)
+        if len(sleeps) > 3:
+            raise asyncio.CancelledError
+
+    async def fake_check(_store):
+        calls.append(settings.auto_retrain_interval_hours)
+
+    monkeypatch.setattr(settings, "auto_retrain_interval_hours", 0.0)
+    monkeypatch.setattr(auto_retrain, "_sleep", fake_sleep)
+    monkeypatch.setattr(auto_retrain, "check", fake_check)
+    with pytest.raises(asyncio.CancelledError):
+        await auto_retrain.loop(None)
+    assert sleeps[:3] == [60, 60, 7200] and calls == [2.0, 2.0]
+
+
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
     assert (await client.post("/admin/v1/training-jobs",
                               json={"datasetId": "test-dataset"},

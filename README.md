@@ -254,6 +254,11 @@ click propensity per position and discounts by it. On the generator's data it re
 the known `1/log2(position+2)` curve within MAE 0.03; each model stores its curve as
 `artifacts.positionBias`.
 
+**Learning settings** ([ADR-0011](docs/adr/0011-learning-settings-maker-checker.md)) change
+through a maker-checker on the dashboard's Pembelajaran page: an ML Engineer or Platform
+Operator files a change with a reason, an Approver decides, and it applies to every
+replica within 15 s. Env vars only give a new deployment its starting values.
+
 **Continuous learning** ([ADR-0007](docs/adr/0007-continuous-learning.md)). Set
 `AUTO_RETRAIN_INTERVAL_HOURS` (off by default) and the API retrains on live feedback from
 Postgres once `AUTO_RETRAIN_MIN_NEW_IMPRESSIONS` new impressions are observable, through
@@ -288,11 +293,8 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
 - **Off-policy evaluation.** Serving is deterministic, so no logged propensities exist and
   doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
   a small randomised share of served slates, which changes what customers see.
-- **Approved changes to the learning switches.** The loops have metrics, alerts with
-  runbooks, and a dashboard page, and a changed setting is audited and alerted when a
-  replica starts with it; but the settings are env vars, so nobody approves a change
-  before it ships. The uplift report is also produced by running `python -m rec.ml.uplift`
-  by hand.
+- **A scheduled uplift report.** The uplift report is produced by running
+  `python -m rec.ml.uplift` by hand; learning-setting requests do not expire.
 - **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
   the API process; a large `tuneTrials` competes with serving on that replica.
 
@@ -336,9 +338,9 @@ most:
    live logs before any of them drives a decision.
 10. **Learning loops before real feedback.** Feedback must match a response actually
     served to that customer, but reported clicks on items really shown cannot be proven
-    and nothing rate-limits them; the learning switches are env vars nobody approves (a
-    change is audited and alerted); retained auto-retrain exports keep an erased customer
-    until they age out (threats S-5, T-10, I-9). Enable auto-retrain only behind an edge
+    and nothing rate-limits them; retained auto-retrain exports keep an erased customer
+    until they age out (threats S-5, I-9). The learning switches change only through an
+    Approver (ADR-0011). Enable auto-retrain only behind an edge
     rate limit; the promo holdout also needs business and legal approval.
 
 ## Synthetic data is simulation, not evidence

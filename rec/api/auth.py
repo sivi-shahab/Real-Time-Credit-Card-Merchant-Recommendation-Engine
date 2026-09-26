@@ -61,6 +61,9 @@ PERMISSIONS: dict[str, set[str]] = {
     "erasure:request": {"Platform Operator"},
     "erasure:approve": {"Approver"},
     "erasure:read": {"Platform Operator", "Approver", "Auditor"},
+    # ADR-0011 maker-checker on the learning switches: one files, an Approver decides.
+    "learning:request": {"ML Engineer", "Platform Operator"},
+    "learning:approve": {"Approver"},
 }
 
 

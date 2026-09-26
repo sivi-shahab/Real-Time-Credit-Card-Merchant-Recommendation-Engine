@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from rec.api import auto_retrain, bff, jobs, ml_jobs, service
+from rec.api import auto_retrain, bff, jobs, learning_settings, ml_jobs, service
 from rec.api.auth import Principal, customer_self, principal, require
 from rec.core.models import (
     FEATURE_SCHEMA_VERSION,
@@ -39,19 +39,14 @@ store = OnlineStore()
 log = logging.getLogger("api")
 
 
-LEARNING_SWITCHES = ("auto_retrain_interval_hours", "auto_retrain_min_new_impressions",
-                     "auto_retrain_keep_exports",
-                     "online_bandit_enabled", "online_bandit_exploration",
-                     "promo_holdout_percent")
-
-
 async def record_learning_config() -> dict | None:
-    """T-10: the learning switches are env vars. Export them as gauges (a change alerts),
-    and audit a change when a replica starts with values unlike the last audited ones.
+    """T-10: export the switches in force as gauges (a change alerts), and audit when a
+    replica starts with values unlike the last audited ones: env drift before the first
+    approved change (ADR-0011), since approved changes are audited as they are made.
     Returns the new values when it audited a change."""
     # ponytail: replicas starting together may both audit the same change; dedupe with an
     # advisory lock if the duplicate rows matter.
-    current = {name: getattr(settings, name) for name in LEARNING_SWITCHES}
+    current = learning_settings.effective()
     for name, value in current.items():
         LEARNING_SWITCH.labels(name).set(float(value))
     conn = await pg.pool()
@@ -70,12 +65,13 @@ async def record_learning_config() -> dict | None:
 async def lifespan(app: FastAPI):
     setup_logging()
     await pg.pool()
+    await learning_settings.refresh(force=True)  # approved values win over env (ADR-0011)
     await record_learning_config()
-    watchers = [asyncio.create_task(guardrail.loop(store))]
-    if settings.auto_retrain_interval_hours > 0:
-        watchers.append(asyncio.create_task(auto_retrain.loop(store)))
-    if settings.online_bandit_enabled:
-        watchers.append(asyncio.create_task(bandit.loop(store)))
+    # The learning loops always run and check their switch each turn, so an approved
+    # change takes effect without a restart.
+    watchers = [asyncio.create_task(task) for task in (
+        guardrail.loop(store), auto_retrain.loop(store), bandit.loop(store),
+        learning_settings.loop())]
     yield
     for watcher in watchers:
         watcher.cancel()
@@ -719,6 +715,41 @@ async def learning_status(p: Annotated[Principal, Depends(require("model:read"))
         },
         "uplift": await uplift.latest_report(),
     }
+
+
+@app.get("/admin/v1/learning/settings", tags=["models"])
+async def get_learning_settings(p: Annotated[Principal, Depends(require("model:read"))]):
+    return await learning_settings.overview()
+
+
+class LearningChangeRequest(BaseModel):
+    changes: learning_settings.LearningChanges
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class LearningDecision(BaseModel):
+    approve: bool
+    note: str | None = Field(None, max_length=500)
+
+
+@app.post("/admin/v1/learning/settings/requests", status_code=201, tags=["models"])
+async def request_learning_change(body: LearningChangeRequest,
+                                  p: Annotated[Principal, Depends(require("learning:request"))]):
+    try:
+        return await learning_settings.request_change(body.changes, body.reason,
+                                                      p.subject, p.role)
+    except learning_settings.Refused as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+@app.post("/admin/v1/learning/settings/requests/{request_id}/decision", tags=["models"])
+async def decide_learning_change(request_id: str, body: LearningDecision,
+                                 p: Annotated[Principal, Depends(require("learning:approve"))]):
+    try:
+        return await learning_settings.decide(request_id, body.approve, body.note,
+                                              p.subject, p.role)
+    except learning_settings.Refused as exc:
+        raise HTTPException(exc.status, str(exc))
 
 
 @app.get("/admin/v1/metrics/overview", tags=["ops"])

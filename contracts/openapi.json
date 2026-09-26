@@ -385,6 +385,134 @@
         "title": "Interaction",
         "type": "object"
       },
+      "LearningChangeRequest": {
+        "properties": {
+          "changes": {
+            "$ref": "#/components/schemas/LearningChanges"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "changes",
+          "reason"
+        ],
+        "title": "LearningChangeRequest",
+        "type": "object"
+      },
+      "LearningChanges": {
+        "additionalProperties": false,
+        "description": "The only settings this flow can change, each bounded. Unknown keys are refused.",
+        "properties": {
+          "auto_retrain_interval_hours": {
+            "anyOf": [
+              {
+                "maximum": 168.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Retrain Interval Hours"
+          },
+          "auto_retrain_keep_exports": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Retrain Keep Exports"
+          },
+          "auto_retrain_min_new_impressions": {
+            "anyOf": [
+              {
+                "maximum": 10000000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auto Retrain Min New Impressions"
+          },
+          "online_bandit_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Online Bandit Enabled"
+          },
+          "online_bandit_exploration": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Online Bandit Exploration"
+          },
+          "promo_holdout_percent": {
+            "anyOf": [
+              {
+                "maximum": 99.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promo Holdout Percent"
+          }
+        },
+        "title": "LearningChanges",
+        "type": "object"
+      },
+      "LearningDecision": {
+        "properties": {
+          "approve": {
+            "title": "Approve",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "approve"
+        ],
+        "title": "LearningDecision",
+        "type": "object"
+      },
       "MerchantPatch": {
         "properties": {
           "merchantName": {
@@ -1288,6 +1416,114 @@
         "summary": "Sse",
         "tags": [
           "ops"
+        ]
+      }
+    },
+    "/admin/v1/learning/settings": {
+      "get": {
+        "operationId": "get_learning_settings_admin_v1_learning_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Learning Settings",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/learning/settings/requests": {
+      "post": {
+        "operationId": "request_learning_change_admin_v1_learning_settings_requests_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Learning Change",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/admin/v1/learning/settings/requests/{request_id}/decision": {
+      "post": {
+        "operationId": "decide_learning_change_admin_v1_learning_settings_requests__request_id__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Learning Change",
+        "tags": [
+          "models"
         ]
       }
     },

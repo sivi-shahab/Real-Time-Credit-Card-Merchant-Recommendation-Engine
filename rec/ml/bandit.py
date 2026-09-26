@@ -183,6 +183,8 @@ async def learn(store, *, now: datetime | None = None) -> int:
 async def loop(store) -> None:
     while True:
         await asyncio.sleep(settings.online_bandit_learn_interval_seconds)
+        if not settings.online_bandit_enabled:  # switched at runtime (ADR-0011)
+            continue
         try:
             learned = await learn(store)
             if learned:

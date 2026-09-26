@@ -64,13 +64,14 @@ the current model stays until someone promotes another.
 `AutoTrainedModelInShadow`: an automatically trained model passed its gates and went to
 SHADOW (actor `system:auto-retrain` in the audit log). An Approver reviews the shadow
 numbers on the Models page before any CANARY. To take it out of SHADOW, roll back.
-To stop the loop: `AUTO_RETRAIN_INTERVAL_HOURS=0` and restart the API.
+To stop the loop: request `auto_retrain_interval_hours = 0` (see learning-switches).
 
 ## online-bandit
 `BanditLearningFailing` or `BanditLearningStalled`: the online bandit (shadow only, never
 served) cannot learn. Check the API log (`bandit`) and Redis: the model, watermark and
 contexts live there (`bandit:*`). Losing them only restarts learning from scratch; there is
-no customer impact. To stop it: `ONLINE_BANDIT_ENABLED=false` and restart the API.
+no customer impact. To stop it: request `online_bandit_enabled = false` (see
+learning-switches).
 
 ## promo-holdout
 `PromoHoldoutSampleRatioMismatch`: over the last day the share of new customers in the
@@ -79,14 +80,19 @@ deterministic hash, so this means recording is losing rows for one arm, or the s
 changed mid-experiment (see `promo_experiment.holdout_percent`). An uplift estimate from a
 mismatched experiment is not trustworthy: pause the analysis, find the cause, and note it
 in the report. Turning the holdout off (`PROMO_HOLDOUT_PERCENT=0`) restores offers to all
-customers at once.
+customers at once (request it; see learning-switches).
 
 ## learning-switches
-`LearningSwitchChanged`: a replica restarted with a different learning setting
-(`auto_retrain_*`, `online_bandit_*`, `promo_holdout_percent`). The first replica to start
-with new values writes an audit row (`system:config`, action `config.learning`, before and
-after). Confirm the change was intended and approved; a holdout change during a running
-experiment invalidates it (see promo-holdout).
+Change a learning setting on the dashboard (Pembelajaran → Pengaturan pembelajaran) or
+`POST /admin/v1/learning/settings/requests`: an ML Engineer or Platform Operator files it
+with a reason, an Approver decides. It applies to every replica within 15 s, no restart.
+After the first approval env no longer decides any switch (ADR-0011).
+
+`LearningSwitchChanged`: a replica's value changed. Expected right after an approval (the
+audit shows `config.learning` by the Approver, with the request). If there is no such
+approval, a replica started with different env values before the first approval
+(`system:config` row): confirm it was intended, then file it as a request so it is
+approved. A holdout change during a running experiment invalidates it (see promo-holdout).
 
 ## redis-loss
 Redis holds derived state only (SDD 3.3). Admin sessions, cache and features are lost;

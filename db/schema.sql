@@ -242,3 +242,27 @@ CREATE TABLE IF NOT EXISTS uplift_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   report     JSONB NOT NULL
 );
+
+-- ===== Learning settings maker-checker (ADR-0011, threat T-10) =====
+-- Once a change is approved this row holds every learning setting and wins over env.
+CREATE TABLE IF NOT EXISTS learning_settings (
+  id              INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  settings_values JSONB NOT NULL,
+  version         INT NOT NULL,
+  updated_by      TEXT NOT NULL,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS learning_setting_requests (
+  request_id   TEXT PRIMARY KEY,
+  changes      JSONB NOT NULL,
+  reason       TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status       TEXT NOT NULL DEFAULT 'PENDING'
+               CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  decided_by   TEXT,
+  decided_at   TIMESTAMPTZ,
+  note         TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS learning_one_pending
+  ON learning_setting_requests ((true)) WHERE status = 'PENDING';

@@ -59,7 +59,7 @@ fraud detection.
 | T-7 | Training data poisoning through feedback, which now trains models (auto-retrain, online bandit) | B1, B5 | Feedback is accepted only from the customer it describes — **fixed here**: any signed-in staff role could write impressions and clicks for any customer, unaudited. Gates compare against the live baseline; automatic training reaches SHADOW at most; an Approver promotes; guardrail rollback. Residual: S-5 | `test_feedback_is_accepted_only_from_the_customer_it_describes`, `test_gates_block_a_model_that_loses_to_baseline_or_blows_the_budget`, `test_auto_trained_model_reaches_shadow_only_while_nothing_serves`, `test_guardrail_rolls_back_a_failing_live_model` | Partial |
 | T-8 | Event contract changed silently, consumers misread data | B3 | Avro contracts, `BACKWARD_TRANSITIVE` check against every committed version in CI; every produced message round-tripped through its schema | `tests/test_contracts.py`, `scripts/check_avro_compat.py` | Mitigated |
 | T-9 | Bandit model, watermark or contexts rewritten in Redis | B4 | The bandit never serves, so the worst case is misleading shadow numbers. State is JSON, not pickle: loading it cannot execute code. Integrity still needs Redis AUTH (T-6) | `test_state_round_trips_through_json_and_keeps_learning_identically` | Partial |
-| T-10 | Learning switches changed without review: `PROMO_HOLDOUT_PERCENT` moved mid-experiment (biased estimate, more customers without offers), auto-retrain or the bandit enabled | B6 | All off by default; holdout bounded to 0–99; each arm row records the split in force. A replica starting with new values writes an audit row (`system:config`, before/after), exports them as `learning_switch`, and `LearningSwitchChanged` raises a ticket; a split drifting from its setting raises `PromoHoldoutSampleRatioMismatch`. Still env vars: nobody approves a change before it ships | `test_learning_settings_are_exported_and_a_change_is_audited`, `deploy/prometheus/alerts_test.yml` | Partial |
+| T-10 | Learning switches changed without review: `PROMO_HOLDOUT_PERCENT` moved mid-experiment (biased estimate, more customers without offers), auto-retrain or the bandit enabled | B2, B6 | Maker-checker (ADR-0011): an ML Engineer or Platform Operator files a bounded change with a reason, an Approver decides, never the requester. Approval stores the full set, which then wins over env, so a deploy cannot move a switch. Every step is audited; the switches are exported and `LearningSwitchChanged` alerts; a drifting split raises `PromoHoldoutSampleRatioMismatch`. Residual: before the first approved change env decides (audited and alerted) | `test_learning_settings_change_needs_a_second_person`, `test_env_cannot_move_a_switch_past_an_approved_value`, `test_rejected_or_invalid_learning_changes_apply_nothing`, `test_learning_settings_are_exported_and_a_change_is_audited`, `deploy/prometheus/alerts_test.yml` | Mitigated |
 
 ## Repudiation
 
@@ -104,6 +104,7 @@ fraud detection.
 | E-3 | A new admin route ships without a guard | RBAC matrix test fails CI for any unguarded `/admin` route | `test_every_admin_route_is_guarded` | Mitigated |
 | E-4 | Compromised app process gains DBA powers | App currently connects as the table owner. Provision a non-owner role with only DML grants | — | Open |
 | E-5 | Vulnerable dependency or tampered image | bandit, pip-audit, `npm audit`, SBOM in CI. Image signing and registry scanning are not in place | CI | Partial |
+| E-7 | One person changes the learning settings alone | Separate `learning:request` and `learning:approve` roles, and the requester can never decide their own request (ADR-0011) | `test_learning_settings_change_needs_a_second_person`, `test_rbac_matrix_every_role_every_route` | Mitigated |
 | E-6 | The system actor changes the deployment without an Approver | Bounded: an approved auto-trained model may go to SHADOW, only from BASELINE or SHADOW; CANARY and FULL need an Approver. Rollback only restores a model that has served — before this, two SHADOW promotions and a rollback put a shadow-only model on full traffic | `test_auto_trained_model_reaches_shadow_only_while_nothing_serves`, `test_rollback_never_puts_a_shadow_model_on_full_traffic` | Mitigated |
 
 ## Top open risks, in order
@@ -114,9 +115,8 @@ fraud detection.
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
 3. **T-4** — model artifacts are not integrity-checked between approval and load.
 4. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
-   report clicks they never made and nothing rate-limits them; the learning switches are
-   env vars nobody approves (changes are audited and alerted); retained training exports
-   keep erased customers until they age out. Keep
+   report clicks they never made and nothing rate-limits them; retained training exports
+   keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
 5. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.

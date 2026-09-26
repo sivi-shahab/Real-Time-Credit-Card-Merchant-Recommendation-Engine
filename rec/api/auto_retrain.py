@@ -21,6 +21,7 @@ from rec.store import pg
 
 log = logging.getLogger("auto_retrain")
 LOCK_KEY = "auto_retrain:lock"
+_sleep = asyncio.sleep  # the loop's clock; a test swaps this, not asyncio's
 
 
 async def check(store, *, now: datetime | None = None) -> str | None:
@@ -75,8 +76,13 @@ async def prune_exports() -> list[str]:
 
 
 async def loop(store) -> None:
+    """Checks every interval while enabled; while off (0) it looks again each minute, so
+    an approved change turns it on without a restart (ADR-0011)."""
     while True:
-        await asyncio.sleep(settings.auto_retrain_interval_hours * 3600)
+        hours = settings.auto_retrain_interval_hours
+        await _sleep(hours * 3600 if hours > 0 else 60)
+        if settings.auto_retrain_interval_hours <= 0:
+            continue
         try:
             await check(store)
         except Exception:  # noqa: BLE001 - a failed run must not kill the API

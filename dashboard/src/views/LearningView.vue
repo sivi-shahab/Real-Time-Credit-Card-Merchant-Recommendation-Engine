@@ -1,12 +1,13 @@
 <script setup lang="ts">
-/** ADR-0007/0010 — what the learning loops are set to and what they last did. Settings are
- *  read-only here: they are deployment config (env), not something a click should flip. */
+/** ADR-0007/0010 — what the learning loops are set to and what they last did. Settings
+ *  change only through the maker-checker panel below (ADR-0011). */
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 import Tag from 'primevue/tag'
 import { get } from '@/lib/api'
 import { count, metric, ms, percent, when } from '@/lib/format'
 import BarChart from '@/components/BarChart.vue'
+import LearningSettingsPanel from '@/components/LearningSettingsPanel.vue'
 import StatCard from '@/components/StatCard.vue'
 import StatePanel from '@/components/StatePanel.vue'
 
@@ -38,7 +39,8 @@ const segments = computed((): Record<string, number> => {
       <p>
         Model dilatih ulang dari feedback live, bandit online belajar di mode shadow, dan
         holdout promo mengukur uplift. Sistem hanya boleh sampai SHADOW; CANARY, FULL dan
-        penargetan promo tetap keputusan manusia (ADR-0007, ADR-0010).
+        penargetan promo tetap keputusan manusia, dan pengaturannya berubah hanya lewat
+        persetujuan Approver (ADR-0007, ADR-0010, ADR-0011).
       </p>
     </div>
   </div>
@@ -48,7 +50,7 @@ const segments = computed((): Record<string, number> => {
       <StatCard label="Auto-retrain" :value="onOff(data.autoRetrain.enabled)"
                 :sub="data.autoRetrain.enabled
                   ? `tiap ${data.autoRetrain.intervalHours} jam · ≥ ${count(data.autoRetrain.minNewImpressions)} impression baru`
-                  : 'AUTO_RETRAIN_INTERVAL_HOURS = 0'" />
+                  : 'interval 0 jam (mati)'" />
       <StatCard label="Bandit online (shadow)" :value="onOff(data.bandit.enabled)"
                 :sub="`${metric(data.bandit.shadow24h.comparisons, count)} perbandingan 24 jam`" />
       <StatCard label="Holdout promo" :value="`${data.promoHoldout.percent}%`"
@@ -107,8 +109,8 @@ const segments = computed((): Record<string, number> => {
     <div class="panel">
       <h3>Holdout promo dan uplift</h3>
       <p v-if="!data.promoHoldout.percent" class="state" style="text-align:left;padding:8px 0">
-        Holdout nonaktif (PROMO_HOLDOUT_PERCENT = 0): tanpa grup kontrol, uplift tidak dapat
-        diestimasi.
+        Holdout nonaktif (0%): tanpa grup kontrol, uplift tidak dapat diestimasi. Mengaktifkannya
+        memerlukan persetujuan di panel pengaturan di bawah.
       </p>
       <div v-if="report" class="grid-2">
         <div class="cards">
@@ -133,4 +135,6 @@ const segments = computed((): Record<string, number> => {
       </div>
     </div>
   </StatePanel>
+
+  <LearningSettingsPanel />
 </template>
