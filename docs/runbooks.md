@@ -90,8 +90,9 @@ Production: managed Postgres PITR, backups encrypted at rest, retention per poli
 AC-009, maker-checker: a Platform Operator files `POST /admin/v1/erasure-requests`
 (customerId, reason); a different person with the Approver role decides via
 `POST /admin/v1/erasure-requests/<id>/decision`. Approval deletes, in one Postgres
-transaction, the customer row, transaction log, impressions, interactions and shadow rows,
-writes a tombstone, then drops Redis state and cache. The stream drops any later event for
+transaction, the customer row, transaction log, impressions, interactions, shadow rows and
+promo-experiment arm, writes a tombstone, then drops Redis state, cache and the online
+bandit's stored contexts. The stream drops any later event for
 that customer — including invalid ones — without logging its envelope; master-data reload
 and training both skip tombstoned ids.
 

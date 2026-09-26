@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -75,6 +76,9 @@ class Settings(BaseSettings):
     online_bandit_enabled: bool = False
     online_bandit_exploration: float = 1.0
     online_bandit_learn_interval_seconds: int = 300
+    # Promo uplift experiment (ADR-0010): share of customers served without promo offers.
+    # 0 = off. Keep it fixed while an experiment runs; 100 would leave no treatment arm.
+    promo_holdout_percent: int = Field(0, ge=0, le=99)
 
 
 DEV_ENVIRONMENTS = {"local", "test", "ci"}

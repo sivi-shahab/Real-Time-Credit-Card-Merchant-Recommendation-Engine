@@ -703,6 +703,13 @@
             "title": "Testfraction",
             "type": "number"
           },
+          "tuneTrials": {
+            "default": 0,
+            "maximum": 200.0,
+            "minimum": 0.0,
+            "title": "Tunetrials",
+            "type": "integer"
+          },
           "xgboost": {
             "anyOf": [
               {

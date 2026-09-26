@@ -220,3 +220,13 @@ CREATE TABLE IF NOT EXISTS erased_customers (
 -- Processing order for state rebuild. received_at is per flush batch since Fase 5
 -- batching, so it cannot order a customer's events on its own. (expand-only change)
 ALTER TABLE transaction_log ADD COLUMN IF NOT EXISTS seq BIGSERIAL;
+
+-- ===== Promo holdout experiment (ADR-0010) =====
+-- The first arm each customer was served in while the holdout ran. Customer data:
+-- erasure deletes it. holdout_percent is kept so a changed split is visible in analysis.
+CREATE TABLE IF NOT EXISTS promo_experiment (
+  customer_id      TEXT PRIMARY KEY,
+  arm              TEXT NOT NULL CHECK (arm IN ('TREATMENT','HOLDOUT')),
+  holdout_percent  INT NOT NULL CHECK (holdout_percent BETWEEN 1 AND 99),
+  first_exposed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

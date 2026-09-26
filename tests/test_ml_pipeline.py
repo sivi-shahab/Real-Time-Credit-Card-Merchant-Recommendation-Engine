@@ -175,6 +175,19 @@ def test_unbiased_lambdamart_recovers_the_generators_position_bias(dataset_dir, 
     assert sum(abs(a - b) for a, b in zip(clicked, truth)) / len(truth) < 0.08
 
 
+def test_tuning_stays_inside_the_training_period_and_is_reproducible(dataset_dir, tmp_path):
+    runs = [train(dataset_dir, out_dir=tmp_path / str(n), num_rounds=40, tune_trials=3,
+                  params={"max_depth": 4}, mlflow_tracking_uri=None) for n in range(2)]
+    tuning, lineage = runs[0].datasetLineage["tuning"], runs[0].datasetLineage
+
+    assert tuning["trials"] == 3 and tuning["heldFixed"] == ["max_depth"]
+    assert "max_depth" not in tuning["bestParams"] and runs[0].params["max_depth"] == 4
+    assert tuning["bestParams"] == runs[1].datasetLineage["tuning"]["bestParams"]
+    # validation is carved from the training period; the test side stays untouched
+    assert lineage["validationRows"] > 0
+    assert lineage["trainRows"] + lineage["validationRows"] + lineage["testRows"] <= lineage["rows"]
+
+
 def test_training_is_reproducible_and_reports_its_gates(dataset_dir, tmp_path):
     first = train(dataset_dir, out_dir=tmp_path / "a", num_rounds=40,
                   mlflow_tracking_uri=None)

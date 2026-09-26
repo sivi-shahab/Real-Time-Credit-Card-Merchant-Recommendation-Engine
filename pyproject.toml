@@ -21,10 +21,15 @@ dependencies = [
   "fastavro>=1.9",
   # exact: rec/ml/bandit.py serialises river's private model state (round-trip tested)
   "river==0.26.1",
+  "optuna>=4.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "httpx>=0.27", "ruff>=0.7"]
+# Offline challengers only (rec/ml/benchmark.py, ADR-0009); never in the app image.
+benchmark = ["catboost>=1.2"]
+# Offline promo uplift (rec/ml/uplift.py, ADR-0010); serving never imports it.
+causal = ["causalml>=0.17"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

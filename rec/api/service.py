@@ -28,7 +28,7 @@ from rec.core.ranking import (
     score_baseline,
     to_recommendations,
 )
-from rec.ml import bandit, guardrail, registry
+from rec.ml import bandit, guardrail, registry, uplift
 from rec.ml import client as ranking_client
 from rec.ml.vectorize import vectorize
 from rec.obs import RANKING_DEGRADED, RECOMMENDATIONS, redact
@@ -149,6 +149,10 @@ async def recommend(
                            "modelVersion": model_version,
                            "canaryPercent": deployment.get("canary_percent")}
     key = cache_key(customer_id, city, channel, limit, model_version)
+    holdout = uplift.in_holdout(customer_id, settings.promo_holdout_percent)
+    if holdout:  # ADR-0010: a holdout response carries no offers, so it caches apart
+        key += "|PROMO_HOLDOUT"
+        debug["promoHoldout"] = True
 
     if use_cache and not preview:
         with stage("cache"):
@@ -184,7 +188,7 @@ async def recommend(
     by_merchant = {m.merchantId: m for m in merchants}
     with stage("promo"):
         eligible: dict[str, dict] = {}
-        for promo in promos:
+        for promo in ([] if holdout else promos):
             merchant = by_merchant.get(promo.merchantId)
             if merchant is None:
                 continue
@@ -278,6 +282,10 @@ async def recommend(
     if not top:
         response.source = "FALLBACK"
         debug["fallbackReason"] = "NO_SAFE_CANDIDATES"
+
+    if settings.promo_holdout_percent and not preview:
+        asyncio.create_task(uplift.record_exposure(customer_id, holdout,
+                                                   settings.promo_holdout_percent))
 
     # Online bandit (ADR-0007 stage 2): shadow only, keyed by the id clients send
     # impressions with. Vectors are built inside the task, off this request's latency.

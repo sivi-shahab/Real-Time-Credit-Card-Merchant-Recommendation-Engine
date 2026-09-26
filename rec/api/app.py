@@ -504,6 +504,8 @@ class TrainingRequest(BaseModel):
     numRounds: int = Field(300, ge=10, le=5000)
     testFraction: float = Field(0.25, gt=0.05, lt=0.9)
     xgboost: dict[str, Any] | None = None
+    # Optuna trials on a validation slice of the training period; 0 = no tuning.
+    tuneTrials: int = Field(0, ge=0, le=200)
 
 
 @app.post("/admin/v1/training-jobs", status_code=202, tags=["models"])
@@ -513,7 +515,7 @@ async def create_training_job(body: TrainingRequest, request: Request,
         job_id = await ml_jobs.create_training_job(
             body.datasetId,
             {"numRounds": body.numRounds, "testFraction": body.testFraction,
-             "xgboost": body.xgboost},
+             "xgboost": body.xgboost, "tuneTrials": body.tuneTrials},
             request.headers.get("idempotency-key"))
     except FileNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
@@ -746,11 +748,12 @@ async def decide_erasure(request_id: str, body: ErasureDecision, request: Reques
                                  VALUES ($1,$2) ON CONFLICT DO NOTHING""",
                               customer_id, request_id)
             for table in ("transaction_log", "impressions", "interactions",
-                          "shadow_evaluations", "customers"):
+                          "shadow_evaluations", "promo_experiment", "customers"):
                 sql = f"DELETE FROM {table} WHERE customer_id=$1"  # nosec B608
                 tag = await con.execute(sql, customer_id)
                 result[table] = int(tag.split()[-1])
-        result["redisKeys"] = await store.erase_customer(customer_id)
+        result["redisKeys"] = (await store.erase_customer(customer_id)
+                               + await bandit.erase(store, customer_id))
     await conn.execute(
         """UPDATE erasure_requests SET status=$2, decided_by=$3, decided_at=now(), result=$4
            WHERE request_id=$1""", request_id, "EXECUTED" if body.approve else "REJECTED",

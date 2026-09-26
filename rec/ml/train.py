@@ -24,6 +24,7 @@ TRAINER_VERSION = "1.0.0"
 LATENCY_BUDGET_MS = 500.0  # NFR: on-demand ranking path p95
 K = 10          # the spec's reporting cut (SDD ML-006)
 SECONDARY_K = 5  # a real cut inside an 8-item slate, where @10 keeps everything
+VALIDATION_FRACTION = 0.2  # of the training period: early stopping and tuning, never test
 
 DEFAULT_PARAMS = {
     "objective": "rank:ndcg",
@@ -99,6 +100,46 @@ def _dmatrix(frame: pd.DataFrame) -> xgb.DMatrix:
     return matrix
 
 
+# Where tuning looks. Keys the caller set explicitly are held fixed, not searched.
+SEARCH_SPACE = {
+    "eta": ("float", 0.02, 0.3, True),
+    "max_depth": ("int", 3, 10, False),
+    "min_child_weight": ("float", 1.0, 20.0, True),
+    "subsample": ("float", 0.5, 1.0, False),
+    "colsample_bytree": ("float", 0.5, 1.0, False),
+    "reg_lambda": ("float", 0.1, 10.0, True),
+}
+
+
+def _tune(dfit: xgb.DMatrix, dval: xgb.DMatrix, validation: pd.DataFrame, base: dict,
+          caller: dict, trials: int, num_rounds: int, early_stopping_rounds: int) -> dict:
+    """Optuna TPE (seeded, so reruns agree) maximising NDCG@SECONDARY_K on validation."""
+    import optuna  # only tuned jobs pay the import
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    x_val = xgb.DMatrix(validation[list(FEATURE_NAMES)].to_numpy(dtype=np.float32),
+                        feature_names=list(FEATURE_NAMES))
+    searched = {k: v for k, v in SEARCH_SPACE.items() if k not in caller}
+
+    def objective(trial: optuna.Trial) -> float:
+        suggested = {
+            name: (trial.suggest_int(name, lo, hi) if kind == "int"
+                   else trial.suggest_float(name, lo, hi, log=log))
+            for name, (kind, lo, hi, log) in searched.items()}
+        booster = xgb.train({**base, **suggested}, dfit, num_boost_round=num_rounds,
+                            evals=[(dval, "validation")],
+                            early_stopping_rounds=early_stopping_rounds, verbose_eval=False)
+        scored = validation.assign(score=booster.predict(x_val))
+        return M.grouped(scored, "score", k=SECONDARY_K)[f"ndcg@{SECONDARY_K}"]
+
+    study = optuna.create_study(direction="maximize",
+                                sampler=optuna.samplers.TPESampler(seed=base.get("seed", 42)))
+    study.optimize(objective, n_trials=trials)
+    return {"library": f"optuna {optuna.__version__}", "trials": trials,
+            "metric": f"ndcg@{SECONDARY_K} on validation", "bestValue": study.best_value,
+            "bestParams": study.best_params, "heldFixed": sorted(set(caller) & set(SEARCH_SPACE))}
+
+
 def train(
     dataset_dir: Path,
     *,
@@ -110,6 +151,7 @@ def train(
     mlflow_tracking_uri: str | None = None,
     experiment: str = "merchant-ranking",
     exclude_customers: frozenset[str] = frozenset(),
+    tune_trials: int = 0,
 ) -> TrainingResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     frame, dataset_meta = build(dataset_dir, exclude_customers=exclude_customers)
@@ -120,12 +162,22 @@ def train(
     if split.test.empty or split.train.empty:
         raise ValueError("temporal split produced an empty side; widen the dataset window")
 
-    merged = {**DEFAULT_PARAMS, **(params or {})}
-    dtrain, dtest = _dmatrix(split.train), _dmatrix(split.test)
+    # The test side only grades the finished model (gates). Early stopping and tuning use
+    # a later slice of the training period, so the gates are not graded on data that
+    # already chose the number of trees or the hyperparameters.
+    fit = temporal_split(split.train, test_fraction=VALIDATION_FRACTION)
+    if fit.test.empty or fit.train.empty:
+        raise ValueError("validation split produced an empty side; widen the dataset window")
+    dfit, dval = _dmatrix(fit.train), _dmatrix(fit.test)
+
+    fixed = {**DEFAULT_PARAMS, **(params or {})}
+    tuning = _tune(dfit, dval, fit.test, fixed, params or {}, tune_trials, num_rounds,
+                   early_stopping_rounds) if tune_trials else None
+    merged = {**fixed, **(tuning["bestParams"] if tuning else {})}
     evals_result: dict = {}
     booster = xgb.train(
-        merged, dtrain, num_boost_round=num_rounds,
-        evals=[(dtrain, "train"), (dtest, "holdout")],
+        merged, dfit, num_boost_round=num_rounds,
+        evals=[(dfit, "train"), (dval, "validation")],
         early_stopping_rounds=early_stopping_rounds,
         evals_result=evals_result, verbose_eval=False,
     )
@@ -166,12 +218,14 @@ def train(
         params=merged,
         datasetLineage={
             **dataset_meta,
-            "trainRows": int(len(split.train)), "testRows": int(len(split.test)),
-            "trainGroups": int(split.train[GROUP_COLUMN].nunique()),
+            "trainRows": int(len(fit.train)), "validationRows": int(len(fit.test)),
+            "testRows": int(len(split.test)),
+            "trainGroups": int(fit.train[GROUP_COLUMN].nunique()),
             "testGroups": int(split.test[GROUP_COLUMN].nunique()),
             "splitBoundary": split.boundary.isoformat(), "gapDays": split.gap_days,
             "python": platform.python_version(), "xgboost": xgb.__version__,
             "slateSizeP50": float(split.test.groupby(GROUP_COLUMN).size().median()),
+            "tuning": tuning,
             "metricCaveat": (
                 f"Slates hold ~{int(split.test.groupby(GROUP_COLUMN).size().median())} items, so "
                 f"@{K} keeps the whole slate: recall@{K} is trivially 1.0 and coverage/diversity "
@@ -280,6 +334,8 @@ def _log_to_mlflow(result: TrainingResult, booster: xgb.Booster,
         mlflow.log_dict({g.name: {"passed": g.passed, "detail": g.detail}
                          for g in result.gates}, "gates.json")
         mlflow.log_dict(result.artifacts["featureImportanceGain"], "feature_importance.json")
+        if result.datasetLineage.get("tuning"):
+            mlflow.log_dict(result.datasetLineage["tuning"], "tuning.json")
         if result.artifacts.get("positionBias"):
             mlflow.log_dict(result.artifacts["positionBias"], "position_bias.json")
         mlflow.log_artifact(result.artifacts["model"])

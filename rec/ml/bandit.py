@@ -35,7 +35,7 @@ VERSION = registry.BANDIT_VERSION
 MODEL_KEY = "bandit:model"
 WATERMARK_KEY = "bandit:watermark"
 LOCK_KEY = "bandit:lock"
-CTX_PREFIX = "bandit:ctx:"
+CTX_PREFIX = "bandit:ctx:"  # + customerId + ":" + requestId, so erasure can find them
 CTX_TTL_SECONDS = int((OBSERVATION_WINDOW + ATTRIBUTION_WINDOW).total_seconds())
 # The state below is river's private layout; pinned in pyproject, round-trip tested.
 _STATE = ("_idx", "_ss_arr", "_ss_inv_arr", "_eta_arr", "_cap", "_n")
@@ -88,6 +88,16 @@ async def current(r) -> BayesianLinearRegression:
 # ---------------------------------------------------------------------- serve + learn
 
 
+def context_key(customer_id: str, request_id: str) -> str:
+    return f"{CTX_PREFIX}{customer_id}:{request_id}"
+
+
+async def erase(store, customer_id: str) -> int:
+    """AC-009: stored contexts are that customer's behavioural features."""
+    keys = [k async for k in store.r.scan_iter(match=f"{CTX_PREFIX}{customer_id}:*")]
+    return await store.r.delete(*keys) if keys else 0
+
+
 async def shadow(store, request_id: str, customer_id: str, served_order: list[str],
                  candidate_ids: list[str],
                  make_vectors: Callable[[], list[dict[str, float]]]) -> None:
@@ -97,7 +107,7 @@ async def shadow(store, request_id: str, customer_id: str, served_order: list[st
         by_id = dict(zip(candidate_ids, vectors, strict=True))
         served = {m: json.dumps(by_id[m]) for m in served_order if m in by_id}
         if served:
-            key = CTX_PREFIX + request_id
+            key = context_key(customer_id, request_id)
             await store.r.hset(key, mapping=served)
             await store.r.expire(key, CTX_TTL_SECONDS)
         t0 = time.perf_counter()
@@ -147,7 +157,8 @@ async def learn(store, *, now: datetime | None = None) -> int:
         text = await store.r.get(MODEL_KEY)
         model, learned = (load(text) if text else new_model()), 0
         for r in impressions:
-            vector = await store.r.hget(CTX_PREFIX + r["request_id"], r["merchant_id"])
+            vector = await store.r.hget(context_key(r["customer_id"], r["request_id"]),
+                                        r["merchant_id"])
             if vector is None or r["impression_id"] not in labels:
                 continue  # served before the bandit ran, or its context expired
             model.learn_one(json.loads(vector), labels[r["impression_id"]])

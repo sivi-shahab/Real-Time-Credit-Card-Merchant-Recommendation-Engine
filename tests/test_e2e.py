@@ -617,7 +617,7 @@ async def test_online_bandit_shadows_live_requests_and_learns_each_impression_on
     request_id, served = body["requestId"], [x["merchantId"] for x in body["recommendations"]]
 
     # served items' vectors are kept under the id clients send impressions with
-    context = await _poll(lambda: store.r.hgetall(bandit.CTX_PREFIX + request_id))
+    context = await _poll(lambda: store.r.hgetall(bandit.context_key(cid, request_id)))
     assert set(context) == set(served)
     assert await _poll(lambda: conn.fetchval(
         "SELECT model_version FROM shadow_evaluations WHERE request_id=$1",
@@ -649,6 +649,73 @@ async def test_online_bandit_shadows_live_requests_and_learns_each_impression_on
                            impression_ids)
         for key in (bandit.MODEL_KEY, bandit.WATERMARK_KEY, bandit.LOCK_KEY):
             await store.r.delete(key)
+
+
+async def test_promo_holdout_serves_no_offers_and_records_the_first_arm(
+        client, replayed, monkeypatch):
+    from rec.ml import uplift
+
+    async def offers(cid: str) -> int:
+        r = await client.get(f"/api/v1/customer/{cid}/recommendations?refresh=true",
+                             headers={"Authorization": f"Bearer cust-{cid}"})
+        assert r.status_code == 200
+        return sum(1 for item in r.json()["recommendations"] if item["promotion"])
+
+    conn = await pg.pool()
+    ids = [r["customer_id"] for r in await conn.fetch(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 80""")]
+    # a holdout customer who does get offers while no experiment runs
+    held = None
+    for cid in (c for c in ids if uplift.in_holdout(c, 50)):
+        if await offers(cid):
+            held = cid
+            break
+    assert held, "no holdout candidate with an eligible promo in the test data"
+    treated = next(c for c in ids if not uplift.in_holdout(c, 50))
+
+    monkeypatch.setattr(settings, "promo_holdout_percent", 50)
+    try:
+        assert await offers(held) == 0
+        await offers(treated)
+        arms = dict(await _poll(lambda: _arms(conn, [held, treated])))
+        assert arms == {held: "HOLDOUT", treated: "TREATMENT"}
+    finally:
+        await conn.execute("DELETE FROM promo_experiment WHERE customer_id = ANY($1)",
+                           [held, treated])
+
+
+async def _arms(conn, ids):
+    rows = await conn.fetch(
+        "SELECT customer_id, arm FROM promo_experiment WHERE customer_id = ANY($1)", ids)
+    return [(r["customer_id"], r["arm"]) for r in rows] if len(rows) == len(ids) else None
+
+
+async def test_uplift_frame_reads_outcomes_after_first_exposure(replayed):
+    from rec.ml import uplift
+
+    conn = await pg.pool()
+    ids = [r["customer_id"] for r in await conn.fetch(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 30""")]
+    exposed = REF - timedelta(days=30)
+    await conn.executemany(
+        """INSERT INTO promo_experiment (customer_id, arm, holdout_percent, first_exposed_at)
+           VALUES ($1, $2, 20, $3)""",
+        [(cid, "HOLDOUT" if n % 5 == 0 else "TREATMENT", exposed)
+         for n, cid in enumerate(ids)])
+    try:
+        frame = await uplift.load_frame(REF)
+        mine = frame[frame["customer_id"].isin(ids)]
+        assert len(mine) == len(ids)
+        assert set(mine["converted"]) <= {0, 1} and mine["txn_count_90d"].sum() > 0
+        assert set(mine["treatment"]) == {0, 1}
+        assert (mine["propensity"] == 0.8).all()
+        # one day after exposure the outcome window is still open: nobody is analysed
+        early = await uplift.load_frame(exposed + timedelta(days=1))
+        assert early.empty or not early["customer_id"].isin(ids).any()
+    finally:
+        await conn.execute("DELETE FROM promo_experiment WHERE customer_id = ANY($1)", ids)
 
 
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
@@ -742,6 +809,10 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
         """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
            GROUP BY customer_id ORDER BY count(*) DESC LIMIT 1""")
     assert await store.r.exists(f"state:{cid}")
+    from rec.ml import bandit
+    await conn.execute("""INSERT INTO promo_experiment (customer_id, arm, holdout_percent)
+                          VALUES ($1, 'TREATMENT', 10) ON CONFLICT DO NOTHING""", cid)
+    await store.r.hset(bandit.context_key(cid, "req-erase"), "M1", "{}")
 
     filed = await client.post("/admin/v1/erasure-requests",
                               json={"customerId": cid, "reason": "PDP deletion request"},
@@ -754,6 +825,8 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
     done = await client.post(f"/admin/v1/erasure-requests/{rid}/decision",
                              json={"approve": True}, headers=APPROVER)
     assert done.status_code == 200 and done.json()["deleted"]["transaction_log"] > 0
+    assert done.json()["deleted"]["promo_experiment"] == 1
+    assert not await store.r.exists(bandit.context_key(cid, "req-erase"))
 
     # replay the whole archive, as after a disaster or a reprocessing run
     processor = FeatureProcessor(store, producer=None)

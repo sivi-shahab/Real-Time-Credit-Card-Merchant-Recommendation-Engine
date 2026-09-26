@@ -53,6 +53,7 @@ async def _run(job_id: str, dataset_id: str, params: dict) -> None:
             params=params.get("xgboost"),
             num_rounds=int(params.get("numRounds", 300)),
             test_fraction=float(params.get("testFraction", 0.25)),
+            tune_trials=int(params.get("tuneTrials") or 0),
             mlflow_tracking_uri=settings.mlflow_tracking_uri,
             experiment=settings.mlflow_experiment,
             exclude_customers=await pg.erased_customers(),

@@ -254,6 +254,15 @@ FULL remain an Approver's call. With `ONLINE_BANDIT_ENABLED`, a `river` contextu
 records the ordering it would have shown as shadow model `online-ucb`
 (`/admin/v1/models/shadow/summary?modelVersion=online-ucb`); it never serves.
 
+**Tuning, challengers and uplift** ([ADR-0009](docs/adr/0009-tuning-and-offline-challengers.md),
+[ADR-0010](docs/adr/0010-promo-holdout-and-uplift.md)). A training job can ask for
+`tuneTrials`: Optuna searches XGBoost's parameters on a validation slice of the training
+period (early stopping uses it too, never the test side the gates grade).
+`python -m rec.ml.benchmark` grades CatBoost (`.[benchmark]`) and LightAutoML (own env,
+it downgrades xgboost) on the same splits; they are challengers, not serving candidates.
+`PROMO_HOLDOUT_PERCENT` runs a randomised promo holdout, and `python -m rec.ml.uplift`
+(`.[causal]`) estimates per-customer promo uplift with a CausalML X-learner.
+
 ## Not built
 
 - **Production platform controls.** TLS on every hop, Kafka SASL/ACLs, Redis AUTH,
@@ -263,11 +272,19 @@ records the ordering it would have shown as shadow model `online-ucb`
   local/test/ci. Production automation needs OIDC client credentials.
 - **Distributed tracing.** A `traceId` joins errors, logs and audit rows, but there is no
   OpenTelemetry span propagation across api → ranking.
-- **Live-feedback training.** Training reads a dataset directory, which is what makes it
-  reproducible. The API records impressions and interactions into Postgres, but there is
-  no exporter turning that live feedback into a training dataset yet.
-- **Controlled experiments.** Attribution is last-touch for reporting. Causal uplift needs
-  an A/B holdout, which the canary machinery could carry but does not measure.
+- **Acting on what the learners find.** Live feedback retrains the model and the promo
+  holdout feeds an uplift estimate, but a model past SHADOW still needs an Approver, the
+  online bandit never serves, and no offer is withheld on the strength of an uplift score:
+  each is a policy decision with its own ADR (ADR-0007, ADR-0010).
+- **Off-policy evaluation.** Serving is deterministic, so no logged propensities exist and
+  doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
+  a small randomised share of served slates, which changes what customers see.
+- **Operator surfaces for the learning features.** Tuning, position-bias curves, the
+  bandit's shadow numbers, the promo holdout and the uplift report are reachable through
+  the API, env vars and CLIs only: the dashboard shows none of them, the uplift report is
+  not persisted, and the new loops log but export no Prometheus metrics or alerts.
+- **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
+  the API process; a large `tuneTrials` competes with serving on that replica.
 
 ## Known gaps to close before customer traffic
 
@@ -303,6 +320,10 @@ most:
    separate correction/backfill path (FEAT-003).
 8. **Promo quota in training rows.** Historical eligibility uses current `quota_used`;
    point-in-time quota exhaustion is not reconstructable from the master table.
+9. **Learning choices validated on synthetic data only.** The position-bias norm
+   (ADR-0008), the challenger ranking (ADR-0009) and the uplift estimator (ADR-0010, on a
+   planted effect; generated purchases do not respond to promos) all need re-checking on
+   live logs before any of them drives a decision.
 
 ## Synthetic data is simulation, not evidence
 
