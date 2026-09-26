@@ -17,8 +17,9 @@ re-implemented on the JVM behind the same contract.
 
 ![Architecture](docs/architecture/rec-engine.svg)
 
-Interactive version: [docs/architecture/rec-engine.html](docs/architecture/rec-engine.html)
-(open it locally in a browser, since GitHub shows HTML as source). Both are generated
+Interactive version (zoom, search, guided views):
+[sivi-shahab.github.io/…/architecture/rec-engine.html](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/rec-engine.html),
+served by GitHub Pages from `docs/` on `main`. Both are generated
 with archify from
 [rec-engine.architecture.json](docs/architecture/rec-engine.architecture.json); after
 editing the spec, re-run `deliver` and re-export the SVG from the viewer's Export menu.
