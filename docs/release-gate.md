@@ -20,7 +20,7 @@ production step remains · **OPEN** not met.
 | Injection | PASS | parameterised SQL throughout; `test_sql_metacharacters_are_data_not_code`; bandit clean at medium+ |
 | Secret leakage in logs | PASS | JSON logs through `RedactingFilter` (bearer, cookies, DSN passwords, PAN-shaped digits); `test_logs_redact_credentials` |
 | Static demo tokens dead outside dev | PASS | `test_static_tokens_are_dead_outside_dev` |
-| Dependency / SAST / SBOM in CI | PARTIAL | bandit, pip-audit (0 known vulns today), CycloneDX SBOM, `npm audit` in CI. Image signing and container scanning need the registry |
+| Dependency / SAST / SBOM in CI | PARTIAL | bandit, pip-audit (0 known vulns today), CycloneDX SBOM, `npm audit` in CI. `npm audit` failed from the first commit until vite 8 / vitest 5 / echarts 6 (0 vulns now), so the frontend type-check, tests and build had not run in CI before; the dashboard image now builds from the lockfile (`npm ci`). Image signing and container scanning need the registry |
 | TLS everywhere, Kafka SASL/ACLs, Redis AUTH, encryption at rest | OPEN | local stack is plaintext; required config listed in `docs/runbooks.md` |
 | Threat model | PASS | [threat-model.md](threat-model.md): STRIDE per trust boundary, including the learning features (ADR-0007 to ADR-0010); three findings fixed with tests (forgeable customer tokens now fail closed outside dev, model-version path traversal, feedback writable by any staff role for any customer) |
 | Feedback accepted only from the customer it describes (T-7) | PASS | `test_feedback_is_accepted_only_from_the_customer_it_describes` |
