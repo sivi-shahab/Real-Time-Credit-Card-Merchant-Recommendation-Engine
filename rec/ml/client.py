@@ -38,26 +38,35 @@ async def close() -> None:
         _client = None
 
 
-async def warm(model_version: str, *, timeout_s: float = 30.0) -> None:
+async def warm(model_version: str, sha256: str | None, *, timeout_s: float = 30.0) -> None:
     """Load the artifact before any traffic sees it. A cold load can exceed the serving
-    timeout and degrade the first requests to baseline for no good reason."""
+    timeout and degrade the first requests to baseline for no good reason. The ranking
+    service refuses an artifact whose SHA-256 differs from the recorded one (T-4)."""
+    if not sha256:
+        raise RankingUnavailable("ARTIFACT_DIGEST_MISSING")
     try:
         response = await client().post(f"/v1/models/{model_version}/warm",
+                                      json={"modelSha256": sha256},
                                       timeout=httpx.Timeout(timeout_s))
     except httpx.HTTPError as exc:
         raise RankingUnavailable(f"RANKING_UNREACHABLE:{type(exc).__name__}")
+    if response.status_code == 412:
+        raise RankingUnavailable("ARTIFACT_INTEGRITY")
     if response.status_code >= 400:
         raise RankingUnavailable(f"RANKING_WARM_HTTP_{response.status_code}")
 
 
-async def score(model_version: str, candidates: list[dict[str, float]]) -> tuple[list[float],
-                                                                                float]:
+async def score(model_version: str, candidates: list[dict[str, float]], *,
+                sha256: str | None) -> tuple[list[float], float]:
     """Returns (scores, inferenceMs). Raises RankingUnavailable on any failure."""
     if not candidates:
         return [], 0.0
+    if not sha256:  # a model recorded before T-4 has no digest: fail closed, serve baseline
+        raise RankingUnavailable("ARTIFACT_DIGEST_MISSING")
     try:
         response = await client().post("/v1/score", json={
             "modelVersion": model_version,
+            "modelSha256": sha256,
             "featureSchemaVersion": VECTOR_SCHEMA_VERSION,
             "candidates": candidates,
         })
@@ -67,6 +76,8 @@ async def score(model_version: str, candidates: list[dict[str, float]]) -> tuple
         raise RankingUnavailable(f"RANKING_TRANSPORT:{type(exc).__name__}")
     if response.status_code == 409:
         raise RankingUnavailable("FEATURE_SCHEMA_MISMATCH")
+    if response.status_code == 412:
+        raise RankingUnavailable("ARTIFACT_INTEGRITY")
     if response.status_code >= 400:
         raise RankingUnavailable(f"RANKING_HTTP_{response.status_code}")
     body = response.json()

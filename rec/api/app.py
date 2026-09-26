@@ -635,7 +635,8 @@ async def promote_model(model_version: str, body: PromoteRequest, request: Reque
     # Warm before flipping: a model the ranking service cannot load must not be promoted,
     # and a cold artifact load can blow the serving timeout on the first requests.
     try:
-        await ranking_client.warm(model_version)
+        model = await registry.get_model(model_version)
+        await ranking_client.warm(model_version, model and model["artifact_sha256"])
     except ranking_client.RankingUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
                             f"ranking service cannot load {model_version}: {exc.reason}")

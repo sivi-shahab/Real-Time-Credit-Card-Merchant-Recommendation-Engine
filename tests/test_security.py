@@ -97,7 +97,7 @@ def test_model_version_cannot_escape_the_model_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "model_dir", str(tmp_path / "models"))
     for version in ("../planted", "..", "a/b", "/etc/passwd"):
         with pytest.raises(FileNotFoundError, match="invalid model version"):
-            ranking.registry.get(version)
+            ranking.registry.get(version, "0" * 64)
 
 
 def test_open_redirect_is_blocked():

@@ -26,8 +26,8 @@ async def record_model(result: dict, *, dataset_id: str, job_id: str | None) -> 
     await conn.execute(
         """INSERT INTO models (model_version, dataset_id, job_id, feature_schema_version,
              trainer_version, artifact_path, mlflow_run_id, approved, metrics,
-             baseline_metrics, segment_metrics, gates, lineage, artifacts)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             baseline_metrics, segment_metrics, gates, lineage, artifacts, artifact_sha256)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
            ON CONFLICT (model_version) DO NOTHING""",
         result["modelVersion"], dataset_id, job_id, result["featureSchemaVersion"],
         result["trainerVersion"], result["artifacts"]["model"], result.get("mlflowRunId"),
@@ -35,7 +35,8 @@ async def record_model(result: dict, *, dataset_id: str, job_id: str | None) -> 
         json.dumps(result["baselineMetrics"]), json.dumps(result["segmentMetrics"], default=str),
         json.dumps(result["gates"]), json.dumps(result["datasetLineage"], default=str),
         json.dumps({k: result["artifacts"].get(k)  # the small ones; the model is a file
-                    for k in ("featureImportanceGain", "positionBias")}))
+                    for k in ("featureImportanceGain", "positionBias")}),
+        result["artifacts"].get("modelSha256"))
 
 
 async def list_models(limit: int = 50) -> list[dict]:
@@ -63,9 +64,13 @@ def _decode(row: dict) -> dict:
 
 async def deployment() -> dict:
     conn = await pg.pool()
-    row = await conn.fetchrow("SELECT * FROM model_deployment WHERE id=1")
+    # The digest rides along so the ranking service can verify the file it loads (T-4).
+    row = await conn.fetchrow(
+        """SELECT d.*, m.artifact_sha256 FROM model_deployment d
+           LEFT JOIN models m ON m.model_version = d.model_version WHERE d.id=1""")
     return dict(row) if row else {"mode": "BASELINE", "model_version": None,
-                                  "canary_percent": 0, "previous_version": None}
+                                  "canary_percent": 0, "previous_version": None,
+                                  "artifact_sha256": None}
 
 
 async def promote(model_version: str, *, mode: str, canary_percent: int, actor: str,

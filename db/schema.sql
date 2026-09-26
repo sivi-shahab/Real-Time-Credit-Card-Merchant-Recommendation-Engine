@@ -235,6 +235,11 @@ CREATE TABLE IF NOT EXISTS promo_experiment (
 -- position-bias curve (ADR-0008). Before this they lived only in the metadata file.
 ALTER TABLE models ADD COLUMN IF NOT EXISTS artifacts JSONB NOT NULL DEFAULT '{}';
 
+-- SHA-256 of the model file, recorded at training and verified by the ranking service at
+-- every load (threat T-4). NULL for models trained before it: those no longer serve.
+ALTER TABLE models ADD COLUMN IF NOT EXISTS artifact_sha256 TEXT
+  CHECK (artifact_sha256 ~ '^[0-9a-f]{64}$');
+
 -- Uplift reports from `python -m rec.ml.uplift` (ADR-0010): aggregates only, no
 -- per-customer rows, so erasure has nothing to find here.
 CREATE TABLE IF NOT EXISTS uplift_reports (

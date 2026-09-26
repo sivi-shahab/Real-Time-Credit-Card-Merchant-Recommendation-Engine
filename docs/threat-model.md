@@ -53,7 +53,7 @@ fraud detection.
 | T-1 | Audit rows edited or deleted | B4 | `BEFORE UPDATE OR DELETE` trigger; app role must not own the table (else it can drop the trigger) | `test_audit_log_cannot_be_rewritten` | Partial |
 | T-2 | Cross-site request makes a signed-in operator change a promo or promote a model | B2 | Synchroniser CSRF token on every cookie-authenticated mutation; `SameSite=Lax` | `test_mutation_without_csrf_token_is_refused` | Mitigated |
 | T-3 | Crafted `modelVersion` loads a file outside the model directory | B5 | Version must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` before it becomes a path | `test_model_version_cannot_escape_the_model_directory` | Mitigated |
-| T-4 | Model artifact replaced on the shared volume after approval | B5 | Promotion requires passing gates, matching feature schema, an Approver and a successful warm. The file itself is not hashed: record the artifact SHA-256 at training and verify it at load | — | Open |
+| T-4 | Model artifact replaced on the shared volume after approval | B5 | Promotion requires passing gates, matching feature schema, an Approver and a successful warm. The artifact SHA-256 is recorded in Postgres at training; the API sends it with every warm and score call, and the ranking service hashes the exact bytes it parses and refuses a mismatch (HTTP 412 → baseline, reason `ARTIFACT_INTEGRITY`). A model without a recorded digest does not serve. Residual: someone who can write the `models` table can change the digest too (E-4) | `test_artifact_replaced_after_training_is_refused`, `test_training_is_reproducible_and_reports_its_gates`, `test_model_ranks_when_promoted_and_degrades_when_it_fails` | Mitigated |
 | T-5 | Redelivered or duplicated events inflate features | B3 | Dedup on `eventId` and on `transactionId`; ledger invariants for refunds/reversals | `test_ac001_duplicate_event_and_transaction_are_noops`, `test_ac001_full_replay_is_idempotent` | Mitigated |
 | T-6 | Features or cache altered directly in Redis | B4 | None locally (no AUTH). Redis AUTH + TLS + network policy; state is rebuildable from Postgres | `test_redis_state_rebuilds_exactly_from_postgres` | Open |
 | T-7 | Training data poisoning through feedback, which now trains models (auto-retrain, online bandit) | B1, B5 | Feedback is accepted only from the customer it describes — **fixed here**: any signed-in staff role could write impressions and clicks for any customer, unaudited. Gates compare against the live baseline; automatic training reaches SHADOW at most; an Approver promotes; guardrail rollback. Residual: S-5 | `test_feedback_is_accepted_only_from_the_customer_it_describes`, `test_gates_block_a_model_that_loses_to_baseline_or_blows_the_budget`, `test_auto_trained_model_reaches_shadow_only_while_nothing_serves`, `test_guardrail_rolls_back_a_failing_live_model` | Partial |
@@ -113,11 +113,10 @@ fraud detection.
    can go live until channel tokens are verified.
 2. **S-3 / I-6 / T-6 / I-5** — no transport security or service authentication on
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
-3. **T-4** — model artifacts are not integrity-checked between approval and load.
-4. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
+3. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
    report clicks they never made and nothing rate-limits them; retained training exports
    keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
-5. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
+4. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.
-6. **E-4 / T-1** — the app's database role can undo the audit protection.
+5. **E-4 / T-1** — the app's database role can undo the audit protection.

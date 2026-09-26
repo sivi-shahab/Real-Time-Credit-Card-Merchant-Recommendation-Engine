@@ -349,12 +349,15 @@ async def _register_fake_model(model_version: str, *, approved: bool = True,
         "modelVersion": model_version,
         "featureSchemaVersion": schema or VECTOR_SCHEMA_VERSION,
         "trainerVersion": "test",
-        "artifacts": {"model": f"/tmp/{model_version}.json"},
+        "artifacts": {"model": f"/tmp/{model_version}.json", "modelSha256": "0" * 64},
         "mlflowRunId": None,
         "approved": approved,
         "metrics": {"ndcg@10": 0.6}, "baselineMetrics": {"ndcg@10": 0.5},
         "segmentMetrics": {}, "gates": gates, "datasetLineage": {},
     }, dataset_id="test-dataset", job_id=None)
+    # record_model keeps an existing row; one from a run before T-4 has no digest
+    await (await pg.pool()).execute(
+        "UPDATE models SET artifact_sha256=$2 WHERE model_version=$1", model_version, "0" * 64)
 
 
 @pytest_asyncio.fixture(loop_scope="session")
@@ -371,7 +374,7 @@ async def baseline_deployment():
 async def _no_warm(monkeypatch):
     from rec.ml import client as ranking_client
 
-    async def warm(_version, **_kwargs):
+    async def warm(_version, _sha256, **_kwargs):
         return None
 
     monkeypatch.setattr(ranking_client, "warm", warm)
@@ -424,7 +427,8 @@ async def test_model_ranks_when_promoted_and_degrades_when_it_fails(client, repl
     await registry.promote("m-live", mode="FULL", canary_percent=100, actor="test")
 
     # a model that simply reverses the baseline order proves the model output is used
-    async def reversed_scores(_version, candidates):
+    async def reversed_scores(_version, candidates, *, sha256):
+        assert sha256 == "0" * 64, "the recorded digest must reach the ranking service (T-4)"
         return [float(-i) for i in range(len(candidates))], 1.23
 
     monkeypatch.setattr(ranking_client, "score", reversed_scores)
@@ -434,7 +438,7 @@ async def test_model_ranks_when_promoted_and_degrades_when_it_fails(client, repl
     assert debug["inferenceMs"] == 1.23
     assert all(isinstance(item.reasonCodes, list) for item in response.recommendations)
 
-    async def boom(_version, _candidates):
+    async def boom(_version, _candidates, *, sha256):
         raise ranking_client.RankingUnavailable("RANKING_TIMEOUT")
 
     monkeypatch.setattr(ranking_client, "score", boom)
@@ -458,7 +462,7 @@ async def test_shadow_mode_does_not_change_what_is_served(client, replayed,
     await _register_fake_model("m-shadow")
     await registry.promote("m-shadow", mode="SHADOW", canary_percent=0, actor="test")
 
-    async def reversed_scores(_version, candidates):
+    async def reversed_scores(_version, candidates, *, sha256):
         return [float(-i) for i in range(len(candidates))], 5.0
 
     monkeypatch.setattr(ranking_client, "score", reversed_scores)
@@ -482,7 +486,7 @@ async def test_canary_routes_only_its_share_and_is_stable_per_customer(client, r
     from rec.ml import client as ranking_client
     from rec.ml import registry
 
-    async def scores(_version, candidates):
+    async def scores(_version, candidates, *, sha256):
         return [1.0] * len(candidates), 1.0
 
     monkeypatch.setattr(ranking_client, "score", scores)
@@ -1222,7 +1226,7 @@ async def test_guardrail_rolls_back_a_failing_live_model(client, replayed, basel
     await _register_fake_model("m-guarded")
     await registry.promote("m-guarded", mode="FULL", canary_percent=100, actor="test")
 
-    async def healthy(_version, candidates):
+    async def healthy(_version, candidates, *, sha256):
         return [0.0] * len(candidates), 1.0
 
     monkeypatch.setattr(ranking_client, "score", healthy)
@@ -1230,7 +1234,7 @@ async def test_guardrail_rolls_back_a_failing_live_model(client, replayed, basel
         await service.recommend(store, cid, use_cache=False)
     assert await guardrail.check(store) is None, "a healthy model must stay live"
 
-    async def boom(_version, _candidates):
+    async def boom(_version, _candidates, *, sha256):
         raise ranking_client.RankingUnavailable("RANKING_TIMEOUT")
 
     monkeypatch.setattr(ranking_client, "score", boom)

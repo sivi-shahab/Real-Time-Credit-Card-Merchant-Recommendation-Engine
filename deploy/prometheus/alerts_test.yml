@@ -7,6 +7,20 @@ rule_files: [alerts.yml]
 evaluation_interval: 1m
 
 tests:
+  - name: a model file that fails its digest check pages (T-4)
+    interval: 1m
+    input_series:
+      - series: 'ranking_degraded_total{reason="ARTIFACT_INTEGRITY"}'
+        values: '0 1 1'
+      - series: 'ranking_degraded_total{reason="RANKING_TIMEOUT"}'
+        values: '0 5 9'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ModelArtifactIntegrityFailed
+        exp_alerts:
+          - exp_labels: {severity: page, reason: ARTIFACT_INTEGRITY}
+            exp_annotations: {summary: "A model file does not match the digest recorded at training (T-4)", runbook: "docs/runbooks.md#model-rollback"}
+
   - name: an automatic job failure raises a ticket
     interval: 1m
     input_series:

@@ -4,6 +4,7 @@ Uses a small generated dataset; no Postgres, Redis or Kafka.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from datetime import timedelta
@@ -199,6 +200,8 @@ def test_training_is_reproducible_and_reports_its_gates(dataset_dir, tmp_path):
     assert {g.name for g in first.gates} == {g.name for g in second.gates}
     assert first.modelVersion != second.modelVersion  # version is timestamped
     assert Path(first.artifacts["model"]).exists()
+    assert first.artifacts["modelSha256"] == hashlib.sha256(
+        Path(first.artifacts["model"]).read_bytes()).hexdigest(), "T-4 digest at training"
     assert first.metrics["inferenceLatencyMsP95"] < 500.0
 
 

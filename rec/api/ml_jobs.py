@@ -128,7 +128,8 @@ async def shadow_if_idle(model_version: str) -> bool:
         if (await registry.deployment())["mode"] not in ("BASELINE", "SHADOW"):
             AUTO_SHADOW.labels("skipped_serving").inc()
             return False
-        await ranking_client.warm(model_version)
+        model = await registry.get_model(model_version)
+        await ranking_client.warm(model_version, model and model["artifact_sha256"])
         await registry.promote(model_version, mode="SHADOW", canary_percent=0,
                                actor=AUTO_ACTOR, note="auto-retrain")
     except Exception:  # noqa: BLE001 - the job already COMPLETED; shadowing is best effort

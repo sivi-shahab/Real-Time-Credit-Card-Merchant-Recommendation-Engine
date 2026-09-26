@@ -91,7 +91,8 @@ def _vectors(candidates, features: dict, *, city_code: str, eligible: dict,
     ]
 
 
-async def _run_shadow(store: OnlineStore, model_version: str, request_id: str,
+async def _run_shadow(store: OnlineStore, model_version: str, sha256: str | None,
+                      request_id: str,
                       customer_id: str, vectors: list[dict[str, float]],
                       candidate_ids: list[str], served_order: list[str],
                       limit: int) -> None:
@@ -101,7 +102,8 @@ async def _run_shadow(store: OnlineStore, model_version: str, request_id: str,
     response or surface as a request failure.
     """
     try:
-        scores, inference_ms = await ranking_client.score(model_version, vectors)
+        scores, inference_ms = await ranking_client.score(model_version, vectors,
+                                                          sha256=sha256)
         ranked = [merchant_id for _, merchant_id in
                   sorted(zip(scores, candidate_ids, strict=True),
                          key=lambda pair: (-pair[0], pair[1]))][:limit]
@@ -228,7 +230,8 @@ async def recommend(
             vectors = _vectors(candidates, features, city_code=city, eligible=eligible, now=now)
             t0 = time.perf_counter()
             try:
-                scores, inference_ms = await ranking_client.score(model_version, vectors)
+                scores, inference_ms = await ranking_client.score(
+                    model_version, vectors, sha256=deployment.get("artifact_sha256"))
                 scored = [
                     (float(score), merchant,
                      meta_by_merchant[merchant.merchantId] | {"ranker": "MODEL"})
@@ -264,7 +267,8 @@ async def recommend(
             and not preview):
         request_id_for_shadow = str(uuid.uuid4())
         asyncio.create_task(_run_shadow(
-            store, shadow_version, request_id_for_shadow, customer_id,
+            store, shadow_version, deployment.get("artifact_sha256"),
+            request_id_for_shadow, customer_id,
             _vectors(candidates, features, city_code=city, eligible=eligible, now=now),
             [m.merchantId for m in candidates], baseline_order[:limit], limit))
         debug["shadow"] = {"modelVersion": shadow_version, "requestId": request_id_for_shadow}

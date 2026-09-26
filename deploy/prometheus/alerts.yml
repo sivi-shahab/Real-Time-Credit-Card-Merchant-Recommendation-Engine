@@ -21,6 +21,10 @@ groups:
         expr: increase(guardrail_rollbacks_total[15m]) > 0
         labels: {severity: ticket}
         annotations: {summary: "A model was rolled back automatically", runbook: "docs/runbooks.md#model-rollback"}
+      - alert: ModelArtifactIntegrityFailed
+        expr: increase(ranking_degraded_total{reason="ARTIFACT_INTEGRITY"}[15m]) > 0
+        labels: {severity: page}
+        annotations: {summary: "A model file does not match the digest recorded at training (T-4)", runbook: "docs/runbooks.md#model-rollback"}
       - alert: StreamQuarantineSpike
         expr: sum(rate(stream_events_total{outcome!~"APPLIED|DUPLICATE_EVENT|ERASED_CUSTOMER"}[5m])) / sum(rate(stream_events_total[5m])) > 0.05
         for: 10m

@@ -47,6 +47,11 @@ Rollback goes to the previous model that served (CANARY/FULL), or to the baselin
 is none; a model that was only ever in SHADOW is never restored. It never needs
 approval; re-promotion always does. Cache is invalidated on every change.
 
+`ARTIFACT_INTEGRITY` in `ranking_degraded` / a promote refused with it: the model file
+on the volume no longer matches the SHA-256 recorded at training (T-4). Treat it as a
+security incident: do not re-promote, keep the file for investigation, retrain.
+`ARTIFACT_DIGEST_MISSING`: the model was trained before digests were recorded; retrain it.
+
 ## quarantine
 More than 5% of events quarantined. `GET /admin/v1/metrics/overview` →
 `quarantineByReason`. Quarantined events are in `transaction_log` (outcome `QUARANTINED`)

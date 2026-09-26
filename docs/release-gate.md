@@ -29,7 +29,7 @@ production step remains · **OPEN** not met.
 | Live feedback bound to served responses (S-5) | PARTIAL | impressions must match a slate served to that customer (merchant, position; served model recorded), clicks must match an own impression: `test_feedback_must_match_a_slate_that_was_served`. Clicks on items really shown cannot be proven; enable auto-retrain only behind a per-customer rate limit at the edge (D-1) |
 | Learning switches under change control (T-10, E-7) | PASS | maker-checker (ADR-0011): `test_learning_settings_change_needs_a_second_person`, `test_env_cannot_move_a_switch_past_an_approved_value`, `test_rejected_or_invalid_learning_changes_apply_nothing`; live request → approve through the dashboard. Go-live should include one approved change so env stops deciding |
 | Customer channel authentication (threat S-2) | OPEN | `cust-<id>` is a dev stand-in, refused outside local/test/ci; real mobile-channel token verification is not built |
-| Model artifact integrity between approval and load (T-4) | OPEN | record SHA-256 at training, verify at warm |
+| Model artifact integrity between approval and load (T-4) | PASS | SHA-256 recorded at training, verified by the ranking service on every load; mismatch or missing digest serves baseline: `test_artifact_replaced_after_training_is_refused` |
 | Event contracts: Avro + `BACKWARD_TRANSITIVE` in CI (EVT-004) | PASS | `tests/test_contracts.py`, `scripts/check_avro_compat.py` |
 | External penetration test; PCI DSS / UU PDP scoping (SEC-003) | OPEN | needs the authorised parties; nothing here claims compliance |
 
@@ -85,7 +85,7 @@ and one consumer per partition (6), and a real Kafka load generator.
 | Check | Status | Evidence |
 |---|---|---|
 | Metrics | PASS | `/metrics` on api, ranking, stream; Prometheus scraping all three |
-| Alerts with runbook links | PASS | `deploy/prometheus/alerts.yml` (12 rules) → `docs/runbooks.md`; `promtool check` and the rule unit tests in `alerts_test.yml` run in CI |
+| Alerts with runbook links | PASS | `deploy/prometheus/alerts.yml` (14 rules) → `docs/runbooks.md`; `promtool check` and the rule unit tests in `alerts_test.yml` run in CI |
 | Trace correlation | PARTIAL | `traceId` in every error, header, log line and audit row; no distributed tracing (OpenTelemetry) across services |
 | Runbooks | PASS | `docs/runbooks.md` |
 | Alert routing (pager), on-call rota, dashboards in the ops tool | OPEN | organisational |

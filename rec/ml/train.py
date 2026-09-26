@@ -3,6 +3,7 @@ and apply the promotion gates. Offline scores alone never promote a model (ML-00
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import time
@@ -238,6 +239,8 @@ def train(
         gates=_gates(model_metrics, base_metrics, segment_metrics, model_path),
         artifacts={
             "model": str(model_path),
+            # Recorded in Postgres, checked by the ranking service at every load (T-4).
+            "modelSha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
             "featureImportanceGain": dict(sorted(importance.items(), key=lambda kv: -kv[1])),
             "learningCurve": evals_result,
             # Estimated relative click propensity by display position (index 0 = top).
