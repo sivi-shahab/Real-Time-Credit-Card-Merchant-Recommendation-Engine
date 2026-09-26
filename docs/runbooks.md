@@ -56,8 +56,9 @@ events with **the same eventId** only if they were never applied.
 ## auto-retrain
 `AutoRetrainFailing`: an automatic check or training job failed. The API log names the
 step (`auto_retrain`, `ml_jobs`); `GET /admin/v1/training-jobs` shows the job and its
-error. Common causes: the data volume is full (every run writes a `live-*` snapshot —
-remove old ones), or the export found no observable impressions. Nothing serving changes:
+error. Common causes: the data volume is full (each run writes a `live-*` snapshot; retention
+keeps the newest `AUTO_RETRAIN_KEEP_EXPORTS` plus those in use, audited as
+`dataset.prune`), or the export found no observable impressions. Nothing serving changes:
 the current model stays until someone promotes another.
 
 `AutoTrainedModelInShadow`: an automatically trained model passed its gates and went to
@@ -132,7 +133,8 @@ that customer — including invalid ones — without logging its envelope; maste
 and training both skip tombstoned ids.
 
 Not covered: Kafka topics (bounded by topic retention), dataset files already on disk
-(filtered on read, not rewritten), MLflow artifacts of models trained before the erasure
+(filtered on read, not rewritten; auto-retrain exports age out after
+`AUTO_RETRAIN_KEEP_EXPORTS` runs unless a serving model depends on one), MLflow artifacts of models trained before the erasure
 (retrain to purge), and audit rows (immutable; they carry only the pseudonymous id).
 Legal must confirm this scope under UU PDP.
 

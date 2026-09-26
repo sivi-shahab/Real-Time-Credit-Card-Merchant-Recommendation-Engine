@@ -81,6 +81,8 @@ AUTO_RETRAIN_RUNS = Counter("auto_retrain_runs_total", "Auto-retrain evaluations
                             ["outcome"])  # queued | below_threshold | locked | failed
 TRAINING_JOBS = Counter("training_jobs_total", "Training jobs finished",
                         ["trigger", "status"])
+LIVE_EXPORTS_PRUNED = Counter("live_exports_pruned_total",
+                              "Auto-retrain dataset exports deleted by retention")
 AUTO_SHADOW = Counter("auto_shadow_promotions_total", "Automatic SHADOW promotions",
                       ["outcome"])  # promoted | skipped_serving | failed
 BANDIT_PASSES = Counter("bandit_learning_passes_total", "Online bandit learning passes",

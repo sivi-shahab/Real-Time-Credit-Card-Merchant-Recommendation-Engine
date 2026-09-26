@@ -582,6 +582,9 @@ async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
 
     monkeypatch.setattr(auto_retrain.ml_jobs, "create_training_job", fake_job)
     monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "auto_retrain_keep_exports", 2)
+    for old_export in ("live-20260101000000", "live-20260102000000", "live-20260103000000"):
+        (tmp_path / old_export).mkdir()
     await store.r.delete(auto_retrain.LOCK_KEY)
     conn = await pg.pool()
     now = datetime.now(UTC)
@@ -603,6 +606,13 @@ async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
         manifest = json.loads((tmp_path / dataset_id / "manifest.json").read_text())
         assert manifest["source"] == "live-postgres"
         assert manifest["rowCounts"]["feedbackEvents"] >= 3
+        # I-9 retention: the new export and the newest old one stay, the rest go, audited
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["live-20260103000000", dataset_id]
+        prune = await conn.fetchrow(
+            """SELECT changes FROM audit_events WHERE action = 'dataset.prune'
+               ORDER BY id DESC LIMIT 1""")
+        assert json.loads(prune["changes"])["removed"] == ["live-20260101000000",
+                                                           "live-20260102000000"]
 
         assert await auto_retrain.check(store, now=now) is None  # one run per interval
         assert {o: _metric("auto_retrain_runs_total", outcome=o) - before
@@ -787,6 +797,7 @@ async def test_learning_status_reports_every_loop(client, replayed, monkeypatch)
         body = (await client.get("/admin/v1/learning/status", headers=ANALYST)).json()
         assert body["autoRetrain"]["enabled"] and body["autoRetrain"]["intervalHours"] == 6.0
         assert body["autoRetrain"]["lastJob"]["job_id"] == "job-learning"
+        assert body["autoRetrain"]["keepExports"] == settings.auto_retrain_keep_exports
         assert body["bandit"]["enabled"] and body["bandit"]["version"] == "online-ucb"
         assert set(body["bandit"]["shadow24h"]) >= {"comparisons", "avg_rank_agreement"}
         assert body["promoHoldout"]["percent"] == 10
@@ -826,6 +837,30 @@ async def test_feedback_is_accepted_only_from_the_customer_it_describes(client, 
     finally:
         await conn.execute("DELETE FROM interactions WHERE impression_id = 'imp-t7'")
         await conn.execute("DELETE FROM impressions WHERE impression_id = 'imp-t7'")
+
+
+async def test_export_retention_spares_the_dataset_behind_a_serving_model(
+        replayed, baseline_deployment, monkeypatch, tmp_path):
+    """I-9: an old export stays while a model trained on it serves (reproducibility)."""
+    from rec.api import auto_retrain
+    from rec.ml import registry
+
+    await _no_warm(monkeypatch)
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "auto_retrain_keep_exports", 1)
+    names = ["live-20260201000000", "live-20260202000000", "live-20260203000000"]
+    for name in names:
+        (tmp_path / name).mkdir()
+    await registry.record_model({
+        "modelVersion": "m-on-old-export", "featureSchemaVersion": "1.0.0",
+        "trainerVersion": "test", "mlflowRunId": None, "approved": True,
+        "artifacts": {"model": "/tmp/m.json"}, "metrics": {}, "baselineMetrics": {},
+        "segmentMetrics": {}, "gates": [], "datasetLineage": {},
+    }, dataset_id=names[0], job_id=None)
+    await registry.promote("m-on-old-export", mode="FULL", canary_percent=100, actor="test")
+
+    assert await auto_retrain.prune_exports() == [names[1]]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [names[0], names[2]]
 
 
 async def test_learning_settings_are_exported_and_a_change_is_audited(monkeypatch):

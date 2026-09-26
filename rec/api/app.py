@@ -38,6 +38,7 @@ store = OnlineStore()
 
 
 LEARNING_SWITCHES = ("auto_retrain_interval_hours", "auto_retrain_min_new_impressions",
+                     "auto_retrain_keep_exports",
                      "online_bandit_enabled", "online_bandit_exploration",
                      "promo_holdout_percent")
 
@@ -666,6 +667,7 @@ async def learning_status(p: Annotated[Principal, Depends(require("model:read"))
             "enabled": settings.auto_retrain_interval_hours > 0,
             "intervalHours": settings.auto_retrain_interval_hours,
             "minNewImpressions": settings.auto_retrain_min_new_impressions,
+            "keepExports": settings.auto_retrain_keep_exports,
             "lastJob": dict(last_auto) if last_auto else None,
         },
         "bandit": {

@@ -63,7 +63,8 @@ const segments = computed((): Record<string, number> => {
         <h3>Auto-retrain dari feedback live</h3>
         <p class="state" style="text-align:left;padding:4px 0 12px">
           Export Postgres → training job biasa (gerbang, MLflow, registry yang sama). Model yang
-          lulus masuk SHADOW hanya bila belum ada model yang melayani.
+          lulus masuk SHADOW hanya bila belum ada model yang melayani. Disimpan
+          {{ data.autoRetrain.keepExports }} export terbaru, ditambah yang masih dipakai.
         </p>
         <table class="plain" v-if="data.autoRetrain.lastJob">
           <thead><tr><th>Job terakhir</th><th>Dataset</th><th>Status</th><th>Model</th><th>Gerbang</th></tr></thead>

@@ -13,9 +13,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from rec.api import ml_jobs
-from rec.ml import live_dataset
+from rec.ml import live_dataset, registry
 from rec.ml.attribution import OBSERVATION_WINDOW
-from rec.obs import AUTO_RETRAIN_RUNS
+from rec.obs import AUTO_RETRAIN_RUNS, LIVE_EXPORTS_PRUNED
 from rec.settings import settings
 from rec.store import pg
 
@@ -43,14 +43,35 @@ async def check(store, *, now: datetime | None = None) -> str | None:
         return None  # another replica is on it
 
     dataset_id = f"live-{now:%Y%m%d%H%M%S}"
-    # ponytail: one full snapshot dir per run; prune old live-* dirs when disk matters.
     await live_dataset.export(Path(settings.data_dir) / dataset_id, now=now)
     job_id = await ml_jobs.create_training_job(dataset_id, {"trigger": "auto"})
     await pg.audit(ml_jobs.AUTO_ACTOR, "System", "training.start", f"trainingJob/{job_id}",
                    outcome="AUTOMATIC", changes={"datasetId": dataset_id, "newImpressions": new})
     AUTO_RETRAIN_RUNS.labels("queued").inc()
     log.info("auto-retrain queued %s on %s (%d new impressions)", job_id, dataset_id, new)
+    await prune_exports()
     return job_id
+
+
+async def prune_exports() -> list[str]:
+    """I-9: each export copies customer behaviour to disk. Keep the newest few, plus any
+    a job is still reading and any behind a model that serves or could be rolled back to
+    (it must stay reproducible). Deletions are audited."""
+    deployment = await registry.deployment()
+    conn = await pg.pool()
+    pinned = frozenset(r["dataset_id"] for r in await conn.fetch(
+        """SELECT dataset_id FROM models WHERE model_version = ANY($1)
+           UNION SELECT dataset_id FROM training_jobs WHERE status IN ('QUEUED', 'RUNNING')""",
+        [v for v in (deployment.get("model_version"), deployment.get("previous_version")) if v]))
+    removed = await asyncio.to_thread(live_dataset.prune, Path(settings.data_dir),
+                                      keep=settings.auto_retrain_keep_exports, pinned=pinned)
+    if removed:
+        LIVE_EXPORTS_PRUNED.inc(len(removed))
+        await pg.audit(ml_jobs.AUTO_ACTOR, "System", "dataset.prune", "datasets/live",
+                       outcome="AUTOMATIC",
+                       changes={"removed": removed, "keep": settings.auto_retrain_keep_exports,
+                                "pinned": sorted(pinned)})
+    return removed
 
 
 async def loop(store) -> None:

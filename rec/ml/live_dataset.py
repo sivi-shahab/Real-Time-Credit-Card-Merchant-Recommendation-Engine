@@ -8,12 +8,29 @@ impression as ignored before its click could arrive (ML-003).
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 from rec.core.models import Merchant, Promotion
 from rec.ml.attribution import OBSERVATION_WINDOW
 from rec.store import pg
+
+EXPORT_NAME = re.compile(r"^live-\d{14}$")  # live-%Y%m%d%H%M%S: sorts by time
+
+
+def prune(data_dir: Path, *, keep: int, pinned: frozenset[str] = frozenset()) -> list[str]:
+    """I-9: keep the newest `keep` exports and every pinned one; delete the rest.
+
+    Only `live-<timestamp>` directories directly under `data_dir` are candidates, and a
+    symlink is never followed, so generator datasets and the model directory are safe."""
+    exports = sorted(p for p in data_dir.iterdir()
+                     if EXPORT_NAME.match(p.name) and p.is_dir() and not p.is_symlink())
+    doomed = [p for p in exports[:-keep] if p.name not in pinned]
+    for path in doomed:
+        shutil.rmtree(path)
+    return [p.name for p in doomed]
 
 
 def _iso(value: datetime) -> str:

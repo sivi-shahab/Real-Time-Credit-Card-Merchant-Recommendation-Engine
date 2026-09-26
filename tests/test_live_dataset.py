@@ -52,3 +52,28 @@ def test_live_export_builds_the_same_training_frame(tmp_path):
     assert len(expected) > 0
     assert meta["rows"] == len(expected)
     pd.testing.assert_frame_equal(actual, expected)
+
+
+def test_prune_keeps_newest_and_pinned_and_touches_nothing_else(tmp_path):
+    """I-9: retention deletes only `live-<timestamp>` export dirs, never follows a
+    symlink, and leaves generator datasets and the model directory alone."""
+    from rec.ml.live_dataset import prune
+
+    exports = [f"live-2026090{d}000000" for d in range(1, 6)]
+    for name in exports:
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "replay.jsonl").write_text("{}")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "live-20250101000000").symlink_to(elsewhere)   # a link, not an export
+    (tmp_path / "live-20250102000000").write_text("a file")     # a file, not an export
+    for other in ("live-extra", "ui-dataset", "models"):
+        (tmp_path / other).mkdir()
+
+    removed = prune(tmp_path, keep=2, pinned=frozenset({exports[0]}))
+
+    assert removed == exports[1:3]
+    left = {p.name for p in tmp_path.iterdir()}
+    assert left == {exports[0], *exports[3:], "elsewhere", "live-20250101000000",
+                    "live-20250102000000", "live-extra", "ui-dataset", "models"}
+    assert elsewhere.exists()

@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     # Continuous learning, stage 1: retrain on live feedback. 0 disables the loop.
     auto_retrain_interval_hours: float = 0.0
     auto_retrain_min_new_impressions: int = 500
+    # I-9: live exports kept on disk after each run, besides those still in use.
+    auto_retrain_keep_exports: int = Field(3, ge=1)
     # Continuous learning, stage 2: online bandit beside every request, never served.
     online_bandit_enabled: bool = False
     online_bandit_exploration: float = 1.0

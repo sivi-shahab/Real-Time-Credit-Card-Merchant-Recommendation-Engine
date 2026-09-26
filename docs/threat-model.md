@@ -80,7 +80,7 @@ fraud detection.
 | I-6 | Traffic read in transit | all | Plaintext locally. TLS on every external and internal hop | — | Open |
 | I-7 | Erased customer's data survives | B3, B4 | AC-009 maker-checker erasure with tombstones honoured by stream, reload, rebuild and training; it also deletes the promo-holdout arm and the bandit's stored contexts. Kafka retention, on-disk datasets (including `live-*` exports), old MLflow artifacts and backups taken before the erasure are outside it | `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Partial |
 | I-8 | Bulk export of customer data | B2 | No export endpoint; list endpoints capped at 200 rows and paginated | — | Mitigated |
-| I-9 | Every auto-retrain run copies customer behaviour to disk | B5 | Each run writes a full `live-*` snapshot (transactions, feedback) to the data volume and nothing prunes it; training filters erased customers on read, but the files keep them. Needs a retention job | — | Open |
+| I-9 | Every auto-retrain run copies customer behaviour to disk | B5 | After each run only the newest `AUTO_RETRAIN_KEEP_EXPORTS` (3) exports stay, plus any a job is still reading and any behind a serving or roll-back model (kept reproducible); deletions are audited (`dataset.prune`). Only `live-<timestamp>` directories are ever deleted. Erased customers stay in retained exports until they age out; training filters them on read | `test_prune_keeps_newest_and_pinned_and_touches_nothing_else`, `test_export_retention_spares_the_dataset_behind_a_serving_model`, `test_auto_retrain_exports_live_feedback_once_past_the_threshold` | Partial |
 
 ## Denial of service
 
@@ -114,8 +114,8 @@ fraud detection.
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
 3. **T-4** — model artifacts are not integrity-checked between approval and load.
 4. **S-5 / T-10 / I-9** — live feedback is not bound to what was served, the learning
-   switches are env vars nobody approves (changes are audited and alerted), and training
-   exports are never pruned. Keep
+   switches are env vars nobody approves (changes are audited and alerted), and retained
+   training exports keep erased customers until they age out. Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
 5. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.

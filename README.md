@@ -336,7 +336,8 @@ most:
    live logs before any of them drives a decision.
 10. **Learning loops before real feedback.** Feedback is not yet bound to what was
     served, the learning switches are env vars nobody approves (a change is audited and
-    alerted), and auto-retrain exports are never pruned (threats S-5, T-10, I-9). Keep auto-retrain and the promo holdout off
+    alerted), and retained auto-retrain exports keep an erased customer until they age
+    out (threats S-5, T-10, I-9). Keep auto-retrain and the promo holdout off
     until those close; the holdout also needs business and legal approval.
 
 ## Synthetic data is simulation, not evidence

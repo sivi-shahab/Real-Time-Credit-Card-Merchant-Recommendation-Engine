@@ -39,7 +39,7 @@ production step remains · **OPEN** not met.
 |---|---|---|
 | AC-009 erasure, maker-checker, not rematerialised by replay or reload | PASS | `test_ac009_erased_customer_is_not_rematerialised_by_replay` (includes invalid events for the erased id; also removes the promo-holdout arm and bandit contexts) |
 | Erasure scope beyond Postgres/Redis | PARTIAL | Kafka retention, on-disk datasets (filtered on read) including auto-retrain `live-*` exports, old MLflow artifacts, immutable audit rows — legal to confirm (`docs/runbooks.md#erasure`) |
-| Retention of auto-retrain exports (I-9) | OPEN | every run writes a full snapshot that nothing prunes |
+| Retention of auto-retrain exports (I-9) | PARTIAL | newest 3 kept plus those in use, deletions audited: `test_prune_keeps_newest_and_pinned_and_touches_nothing_else`, `test_export_retention_spares_the_dataset_behind_a_serving_model`. Legal to confirm that erased customers may remain in retained exports until they age out |
 | Promo holdout withholds offers from real customers (ADR-0010) | OPEN | business and legal approval of size, duration and consumer-protection position before `PROMO_HOLDOUT_PERCENT > 0` |
 
 ## Audit

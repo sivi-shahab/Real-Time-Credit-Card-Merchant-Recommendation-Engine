@@ -38,8 +38,10 @@ Continuous learning is staged.
 - `previous_version` now only records a model that was serving (CANARY/FULL). Before this,
   shadowing twice and rolling back put the earlier shadow model on FULL traffic without an
   Approver; with automatic shadowing that path would have been routine.
-- Each run writes a full snapshot dir; pruning old `live-*` dirs is left for when disk
-  matters. Export reads whole tables and will need to become incremental at volume.
+- Each run writes a full snapshot dir. Retention keeps the newest
+  `AUTO_RETRAIN_KEEP_EXPORTS` plus any still in use or behind a model that serves or could
+  be rolled back to, and audits each deletion (threat I-9). Export reads whole tables and
+  will need to become incremental at volume.
 - The bandit learns only from what the served ranker chose to show (logged, off-policy
   data), so its exploration term expresses what it would try, not what it has tried.
   Labels are taken when the observation window closes; conversions later in the
