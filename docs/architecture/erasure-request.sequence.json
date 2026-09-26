@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Erasure Request",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 565],
+    "column_fit": "spread",
+    "views": [
+      { "id": "request", "label": "File the request", "focus": ["operator", "api", "pg"], "note": "A Platform Operator files a pending request; nothing is deleted yet." },
+      { "id": "approve", "label": "Approve + execute", "focus": ["approver", "api", "pg", "redis"], "note": "A different person approves; tombstone first, then one delete transaction." },
+      { "id": "enforce", "label": "Enforcement", "focus": ["stream", "redis"], "note": "The feature engine drops any later event for an erased customer." }
+    ],
+    "legend": { "entries": { "emphasis": { "label": "main request" }, "default": { "label": "call" }, "return": { "label": "response" }, "security": { "label": "control" }, "dashed": { "label": "ongoing check" } } }
+  },
+  "participants": [
+    { "id": "operator", "type": "frontend", "label": "Platform Operator", "sublabel": "erasure:request" },
+    { "id": "approver", "type": "security", "label": "Approver", "sublabel": "erasure:approve" },
+    { "id": "api", "type": "backend", "label": "Recommendation API", "sublabel": "FastAPI :8000" },
+    { "id": "pg", "type": "database", "label": "PostgreSQL", "sublabel": "source of truth", "brand": "postgresql" },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "tombstones, state", "brand": "redis" },
+    { "id": "stream", "type": "backend", "label": "Feature Engine", "sublabel": "rec.stream" }
+  ],
+  "messages": [
+    { "id": "file", "from": "operator", "to": "api", "y": 165, "label": "POST /erasure-requests", "variant": "emphasis" },
+    { "id": "pending", "from": "api", "to": "pg", "y": 193, "label": "PENDING + audit", "variant": "default" },
+    { "id": "filed", "from": "api", "to": "operator", "y": 221, "label": "201 PENDING", "variant": "return" },
+    { "id": "decide", "from": "approver", "to": "api", "y": 249, "label": "POST /decision", "variant": "emphasis" },
+    { "id": "check", "from": "api", "to": "pg", "y": 277, "label": "pending, not own?", "variant": "security" },
+    { "id": "tombstone", "from": "api", "to": "redis", "y": 305, "label": "tombstone first", "variant": "security" },
+    { "id": "delete", "from": "api", "to": "pg", "y": 333, "label": "txn: tombstone + delete", "variant": "emphasis" },
+    { "id": "purge", "from": "api", "to": "redis", "y": 361, "label": "delete state + cache", "variant": "default" },
+    { "id": "executed", "from": "api", "to": "pg", "y": 389, "label": "EXECUTED + audit", "variant": "default" },
+    { "id": "done", "from": "api", "to": "approver", "y": 417, "label": "200 deleted counts", "variant": "return" },
+    { "id": "enforce", "from": "stream", "to": "redis", "y": 445, "label": "is_erased? drop", "variant": "dashed" }
+  ],
+  "segments": [
+    { "from": 150, "to": 232, "label": "Request" },
+    { "from": 238, "to": 428, "label": "Approve + execute" },
+    { "from": 434, "to": 456, "label": "Enforce" }
+  ],
+  "activations": [
+    { "participant": "api", "from": 165, "to": 227, "type": "backend" },
+    { "participant": "api", "from": 249, "to": 423, "type": "backend" }
+  ],
+  "cards": [
+    { "dot": "amber", "title": "Maker-checker", "items": ["Operator files, a different Approver decides (403 on own)", "One pending request per customer (409)"] },
+    { "dot": "rose", "title": "Order matters", "items": ["Redis tombstone before deletes stops the stream re-writing", "Deletes 5 tables in one transaction; audit rows are kept"] },
+    { "dot": "emerald", "title": "Enforcement", "items": ["Stream checks tombstones before schema validation", "Training excludes erased customers on every run"] }
+  ]
+}
