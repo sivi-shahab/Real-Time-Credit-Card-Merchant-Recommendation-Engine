@@ -13,6 +13,7 @@ from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.store import pg
 
 BASELINE_VERSION = "baseline-1.0.0"
+BANDIT_VERSION = "online-ucb"  # continuous learning stage 2, shadow only (ADR-0007)
 MODES = ("BASELINE", "SHADOW", "CANARY", "FULL")
 
 
@@ -131,6 +132,14 @@ def in_canary(customer_id: str, percent: int) -> bool:
     return (int.from_bytes(digest[:4], "big") % 100) < percent
 
 
+def rank_agreement(a: list[str], b: list[str]) -> float:
+    """Share of positions where two orderings agree on the same merchant."""
+    if not a or not b:
+        return 0.0
+    pairs = min(len(a), len(b))
+    return sum(1 for i in range(pairs) if a[i] == b[i]) / pairs
+
+
 async def record_shadow(request_id: str, customer_id: str, model_version: str,
                         served_source: str, rank_agreement: float | None,
                         top1_agreement: bool | None, latency_ms: float | None) -> None:
@@ -143,7 +152,9 @@ async def record_shadow(request_id: str, customer_id: str, model_version: str,
         top1_agreement, latency_ms, datetime.now(UTC))
 
 
-async def shadow_summary(limit_hours: int = 24) -> dict:
+async def shadow_summary(limit_hours: int = 24, model_version: str | None = None) -> dict:
+    """One model version, or by default every shadow model except the online bandit,
+    which runs beside every request and would drown the promoted candidate's numbers."""
     conn = await pg.pool()
     row = await conn.fetchrow(
         """SELECT count(*) AS comparisons,
@@ -152,7 +163,10 @@ async def shadow_summary(limit_hours: int = 24) -> dict:
                   percentile_disc(0.95) WITHIN GROUP (ORDER BY model_latency_ms)
                     AS model_latency_p95
            FROM shadow_evaluations
-           WHERE occurred_at > now() - ($1 || ' hours')::interval""", str(limit_hours))
+           WHERE occurred_at > now() - ($1 || ' hours')::interval
+             AND CASE WHEN $2::text IS NULL THEN model_version <> $3
+                      ELSE model_version = $2 END""",
+        str(limit_hours), model_version, BANDIT_VERSION)
     out = dict(row)
     return {k: (float(v) if isinstance(v, (int, float)) and v is not None else v)
             for k, v in out.items()}

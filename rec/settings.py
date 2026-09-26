@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     # Continuous learning, stage 1: retrain on live feedback. 0 disables the loop.
     auto_retrain_interval_hours: float = 0.0
     auto_retrain_min_new_impressions: int = 500
+    # Continuous learning, stage 2: online bandit beside every request, never served.
+    online_bandit_enabled: bool = False
+    online_bandit_exploration: float = 1.0
+    online_bandit_learn_interval_seconds: int = 300
 
 
 DEV_ENVIRONMENTS = {"local", "test", "ci"}

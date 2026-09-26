@@ -593,6 +593,64 @@ async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
         await store.r.delete(auto_retrain.LOCK_KEY)
 
 
+async def _poll(check, attempts: int = 100):
+    for _ in range(attempts):
+        if result := await check():
+            return result
+        await asyncio.sleep(0.05)
+    return None
+
+
+async def test_online_bandit_shadows_live_requests_and_learns_each_impression_once(
+        client, replayed, monkeypatch):
+    from rec.ml import bandit, registry
+
+    monkeypatch.setattr(settings, "online_bandit_enabled", True)
+    for key in (bandit.MODEL_KEY, bandit.WATERMARK_KEY, bandit.LOCK_KEY):
+        await store.r.delete(key)
+    conn = await pg.pool()
+    cid = await conn.fetchval(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC LIMIT 1""")
+    body = (await client.get(f"/api/v1/customer/{cid}/recommendations?refresh=true",
+                             headers={"Authorization": f"Bearer cust-{cid}"})).json()
+    request_id, served = body["requestId"], [x["merchantId"] for x in body["recommendations"]]
+
+    # served items' vectors are kept under the id clients send impressions with
+    context = await _poll(lambda: store.r.hgetall(bandit.CTX_PREFIX + request_id))
+    assert set(context) == set(served)
+    assert await _poll(lambda: conn.fetchval(
+        "SELECT model_version FROM shadow_evaluations WHERE request_id=$1",
+        request_id)) == bandit.VERSION
+    assert (await registry.shadow_summary(24, bandit.VERSION))["comparisons"] >= 1
+    assert (await registry.shadow_summary(24))["comparisons"] == await conn.fetchval(
+        """SELECT count(*) FROM shadow_evaluations
+           WHERE occurred_at > now() - interval '24 hours' AND model_version <> $1""",
+        bandit.VERSION)
+
+    now = datetime.now(UTC)
+    impression_ids = [f"imp-bandit-{n}" for n in range(len(served))]
+    await conn.executemany(
+        """INSERT INTO impressions (impression_id, request_id, customer_id, merchant_id,
+             position, occurred_at) VALUES ($1, $2, $3, $4, $5, $6)""",
+        [(iid, request_id, cid, m, n, now - timedelta(days=2))
+         for n, (iid, m) in enumerate(zip(impression_ids, served))])
+    await conn.execute(
+        """INSERT INTO interactions (interaction_id, impression_id, customer_id, merchant_id,
+             interaction_type, occurred_at) VALUES ('int-bandit', $1, $2, $3, 'CLICK', $4)""",
+        impression_ids[0], cid, served[0], now - timedelta(days=2) + timedelta(minutes=1))
+    try:
+        assert await bandit.learn(store, now=now) == len(served)
+        assert await store.r.get(bandit.MODEL_KEY)
+        assert await bandit.learn(store, now=now) == 0  # watermark: learned exactly once
+    finally:
+        await conn.execute("DELETE FROM interactions WHERE interaction_id='int-bandit'")
+        await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)",
+                           impression_ids)
+        for key in (bandit.MODEL_KEY, bandit.WATERMARK_KEY, bandit.LOCK_KEY):
+            await store.r.delete(key)
+
+
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
     assert (await client.post("/admin/v1/training-jobs",
                               json={"datasetId": "test-dataset"},

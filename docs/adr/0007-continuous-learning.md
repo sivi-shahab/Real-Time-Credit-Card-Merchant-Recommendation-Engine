@@ -1,6 +1,6 @@
 # ADR-0007 — Continuous learning: automatic retrain, human promotion
 
-**Status:** Accepted (stage 1) · 2026-09-26
+**Status:** Accepted (stages 1 and 2) · 2026-09-26
 
 ## Context
 Models were trained only on generator files, so live feedback (impressions and
@@ -23,9 +23,16 @@ Continuous learning is staged.
    warmed and set to SHADOW only when the deployment is BASELINE or SHADOW. SHADOW serves
    the baseline, so no customer sees an unreviewed model. CANARY and FULL stay an
    Approver's decision; the system never replaces a serving model.
-3. **Stage 2 — online bandit in SHADOW (planned).** A `river` Bayesian linear model scores
-   candidates with an upper confidence bound and updates per labelled impression, compared
-   against the served order like today's shadow model. It is not allowed to serve.
+3. **Stage 2 — online bandit, shadow only (built).** `rec/ml/bandit.py`, enabled by
+   `ONLINE_BANDIT_ENABLED`. One `river` `BayesianLinearRegression` over the serving
+   feature vector scores candidates by mean + `ONLINE_BANDIT_EXPLORATION` × stdev (UCB), so
+   learning about one merchant carries to similar ones. `LinUCBDisjoint` was rejected: one
+   model per merchant starts cold for every merchant, and river documents it as too slow
+   for practice. Beside every live request it stores the served items' vectors under the
+   response requestId and records its own ordering in `shadow_evaluations` as
+   `online-ucb`; every `ONLINE_BANDIT_LEARN_INTERVAL_SECONDS` one replica learns each
+   impression whose observation window closed, exactly once (Redis watermark). It never
+   serves: promoting it would be a new decision with its own ADR.
 
 ## Consequences
 - `previous_version` now only records a model that was serving (CANARY/FULL). Before this,
@@ -33,5 +40,12 @@ Continuous learning is staged.
   Approver; with automatic shadowing that path would have been routine.
 - Each run writes a full snapshot dir; pruning old `live-*` dirs is left for when disk
   matters. Export reads whole tables and will need to become incremental at volume.
+- The bandit learns only from what the served ranker chose to show (logged, off-policy
+  data), so its exploration term expresses what it would try, not what it has tried.
+  Labels are taken when the observation window closes; conversions later in the
+  attribution window reach the batch retrain but not the bandit.
+- Bandit state is stored as JSON, not pickle, because Redis runs without AUTH here. That
+  reads river's private attributes, so `river` is pinned exactly and a test round-trips it.
+- The default shadow summary excludes `online-ucb`; pass `modelVersion` to see it.
 - Automatic jobs and promotions are audited as `system:auto-retrain` with outcome
   `AUTOMATIC`.

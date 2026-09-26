@@ -28,10 +28,11 @@ from rec.core.ranking import (
     score_baseline,
     to_recommendations,
 )
+from rec.ml import bandit, guardrail, registry
 from rec.ml import client as ranking_client
-from rec.ml import guardrail, registry
 from rec.ml.vectorize import vectorize
 from rec.obs import RANKING_DEGRADED, RECOMMENDATIONS, redact
+from rec.settings import settings
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
 
@@ -106,21 +107,13 @@ async def _run_shadow(store: OnlineStore, model_version: str, request_id: str,
                          key=lambda pair: (-pair[0], pair[1]))][:limit]
         await registry.record_shadow(
             request_id, customer_id, model_version, "BASELINE",
-            _rank_agreement(served_order, ranked),
+            registry.rank_agreement(served_order, ranked),
             bool(served_order and ranked and served_order[0] == ranked[0]),
             inference_ms)
         await store.incr_metric("shadow_evaluations")
     except Exception as exc:  # noqa: BLE001 - shadow failures are informational only
         log.info("shadow evaluation skipped: %s", exc)
         await store.incr_metric("shadow_failures")
-
-
-def _rank_agreement(a: list[str], b: list[str]) -> float:
-    """Share of positions where two orderings agree on the same merchant."""
-    if not a or not b:
-        return 0.0
-    pairs = min(len(a), len(b))
-    return sum(1 for i in range(pairs) if a[i] == b[i]) / pairs
 
 
 async def recommend(
@@ -285,6 +278,15 @@ async def recommend(
     if not top:
         response.source = "FALLBACK"
         debug["fallbackReason"] = "NO_SAFE_CANDIDATES"
+
+    # Online bandit (ADR-0007 stage 2): shadow only, keyed by the id clients send
+    # impressions with. Vectors are built inside the task, off this request's latency.
+    if settings.online_bandit_enabled and top and not preview:
+        asyncio.create_task(bandit.shadow(
+            store, response.requestId, customer_id,
+            [item.merchantId for item in response.recommendations],
+            [m.merchantId for m in candidates],
+            lambda: _vectors(candidates, features, city_code=city, eligible=eligible, now=now)))
 
     if use_cache and not preview:
         with stage("cacheWrite"):

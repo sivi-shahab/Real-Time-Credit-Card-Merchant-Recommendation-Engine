@@ -25,8 +25,8 @@ from rec.core.models import (
 )
 from rec.core.ranking import DEFAULT_RESULTS, MAX_RESULTS
 from rec.generator.config import DatasetConfig
+from rec.ml import bandit, guardrail, registry
 from rec.ml import client as ranking_client
-from rec.ml import guardrail, registry
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, setup_logging, trace_id_var
 from rec.settings import settings
@@ -44,6 +44,8 @@ async def lifespan(app: FastAPI):
     watchers = [asyncio.create_task(guardrail.loop(store))]
     if settings.auto_retrain_interval_hours > 0:
         watchers.append(asyncio.create_task(auto_retrain.loop(store)))
+    if settings.online_bandit_enabled:
+        watchers.append(asyncio.create_task(bandit.loop(store)))
     yield
     for watcher in watchers:
         watcher.cancel()
@@ -607,8 +609,9 @@ async def guardrail_status(p: Annotated[Principal, Depends(require("model:read")
 
 @app.get("/admin/v1/models/shadow/summary", tags=["models"])
 async def shadow_summary(p: Annotated[Principal, Depends(require("model:read"))],
-                         hours: int = Query(24, ge=1, le=720)):
-    return await registry.shadow_summary(hours)
+                         hours: int = Query(24, ge=1, le=720),
+                         modelVersion: str | None = None):
+    return await registry.shadow_summary(hours, modelVersion)
 
 
 @app.get("/admin/v1/metrics/overview", tags=["ops"])

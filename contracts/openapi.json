@@ -1502,6 +1502,22 @@
               "title": "Hours",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "modelVersion",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Modelversion"
+            }
           }
         ],
         "responses": {

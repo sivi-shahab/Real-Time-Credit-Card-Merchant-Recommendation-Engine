@@ -19,6 +19,8 @@ dependencies = [
   "mlflow>=2.17",
   "prometheus-client>=0.21",
   "fastavro>=1.9",
+  # exact: rec/ml/bandit.py serialises river's private model state (round-trip tested)
+  "river==0.26.1",
 ]
 
 [project.optional-dependencies]

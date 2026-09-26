@@ -243,7 +243,10 @@ are identical for every ranker. The training metadata carries this caveat explic
 `AUTO_RETRAIN_INTERVAL_HOURS` (off by default) and the API retrains on live feedback from
 Postgres once `AUTO_RETRAIN_MIN_NEW_IMPRESSIONS` new impressions are observable, through
 the same gates. An approved result goes to SHADOW only while no model serves; CANARY and
-FULL remain an Approver's call. An online bandit in SHADOW is the planned second stage.
+FULL remain an Approver's call. With `ONLINE_BANDIT_ENABLED`, a `river` contextual bandit
+(UCB over the serving feature vector) also learns from every observable impression and
+records the ordering it would have shown as shadow model `online-ucb`
+(`/admin/v1/models/shadow/summary?modelVersion=online-ucb`); it never serves.
 
 ## Not built
 
