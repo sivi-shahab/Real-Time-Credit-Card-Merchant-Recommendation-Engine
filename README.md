@@ -24,6 +24,24 @@ with archify from
 [rec-engine.architecture.json](docs/architecture/rec-engine.architecture.json); after
 editing the spec, re-run `deliver` and re-export the SVG from the viewer's Export menu.
 
+<details>
+<summary><b>Data ingestion in detail</b>: guard chain, ledger, quarantine, outputs</summary>
+
+![Data ingestion pipeline](docs/architecture/data-ingestion.svg)
+
+[Interactive](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/data-ingestion.html)
+· spec: [data-ingestion.dataflow.json](docs/architecture/data-ingestion.dataflow.json)
+</details>
+
+<details>
+<summary><b>MLOps in detail</b>: train, gate, promote, guardrail rollback</summary>
+
+![MLOps workflow](docs/architecture/mlops.svg)
+
+[Interactive](https://sivi-shahab.github.io/Real-Time-Credit-Card-Merchant-Recommendation-Engine/architecture/mlops.html)
+· spec: [mlops.workflow.json](docs/architecture/mlops.workflow.json)
+</details>
+
 ## Run it
 
 ```bash
@@ -103,7 +121,7 @@ scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
                    rebuild_state.py, loadtest.py, export_openapi.py
 deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
-docs/architecture/ archify diagram (SVG + interactive HTML) and its JSON spec
+docs/architecture/ archify diagrams (system, ingestion, MLOps): JSON spec, SVG, HTML
 docs/runbooks.md   one section per alert, plus restore, erasure, key rotation
 docs/release-gate.md  Fase 5 evidence pack and sign-off
 docs/threat-model.md  STRIDE per trust boundary, with evidence and open risks

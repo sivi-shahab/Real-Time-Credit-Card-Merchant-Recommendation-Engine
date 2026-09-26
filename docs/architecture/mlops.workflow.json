@@ -1,0 +1,306 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "MLOps: Train, Gate, Promote, Roll Back",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "train",
+        "label": "Train and evaluate",
+        "focus": [
+          "request",
+          "dataset",
+          "trainer",
+          "gates",
+          "mlflow",
+          "registry"
+        ],
+        "note": "A training job builds point-in-time data, trains, and records every run with its gates."
+      },
+      {
+        "id": "promote",
+        "label": "Promote to serving",
+        "focus": [
+          "registry",
+          "promote",
+          "api",
+          "ranking"
+        ],
+        "note": "Only gated models can be promoted, by a different person than the trainer."
+      },
+      {
+        "id": "rollback",
+        "label": "Guardrail rollback",
+        "focus": [
+          "api",
+          "guardrail",
+          "rollback"
+        ],
+        "note": "Live model breaches roll back automatically to the previous model or baseline."
+      }
+    ],
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "Person"
+        },
+        "backend": {
+          "label": "Pipeline / service"
+        },
+        "security": {
+          "label": "Gate / control"
+        },
+        "database": {
+          "label": "Store"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "build",
+      "label": "Train + promote"
+    },
+    {
+      "id": "run",
+      "label": "Tracking + serving"
+    },
+    {
+      "id": "guard",
+      "label": "Guardrail",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "b",
+      "label": "Build + train",
+      "fromCol": 0,
+      "toCol": 2
+    },
+    {
+      "id": "g",
+      "label": "Gate + promote",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "request",
+    "dataset",
+    "trainer",
+    "gates",
+    "registry",
+    "promote",
+    "api"
+  ],
+  "nodes": [
+    {
+      "id": "request",
+      "lane": "build",
+      "col": 0,
+      "type": "frontend",
+      "label": "ML Engineer",
+      "sublabel": "POST /training-jobs",
+      "width": 140
+    },
+    {
+      "id": "promote",
+      "lane": "build",
+      "col": 5,
+      "type": "security",
+      "label": "Approver",
+      "sublabel": "SHADOW / CANARY / FULL",
+      "tag": "not the trainer",
+      "width": 140
+    },
+    {
+      "id": "dataset",
+      "lane": "build",
+      "col": 1,
+      "type": "backend",
+      "label": "Dataset Build",
+      "sublabel": "ledger replay + labels",
+      "tag": "erased excluded",
+      "width": 140
+    },
+    {
+      "id": "trainer",
+      "lane": "build",
+      "col": 2,
+      "type": "backend",
+      "label": "XGBoost LTR",
+      "sublabel": "temporal split",
+      "tag": "vs baseline",
+      "width": 140
+    },
+    {
+      "id": "gates",
+      "lane": "build",
+      "col": 3,
+      "type": "security",
+      "label": "Evaluation Gates",
+      "sublabel": "NDCG, p95, schema",
+      "tag": "segments",
+      "width": 140
+    },
+    {
+      "id": "mlflow",
+      "lane": "run",
+      "col": 2,
+      "type": "database",
+      "label": "MLflow",
+      "sublabel": "params, metrics, model",
+      "width": 140
+    },
+    {
+      "id": "registry",
+      "lane": "build",
+      "col": 4,
+      "type": "database",
+      "label": "Model Registry",
+      "sublabel": "Postgres, approved flag",
+      "width": 140
+    },
+    {
+      "id": "api",
+      "lane": "run",
+      "col": 5,
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "canary by customer hash",
+      "width": 140
+    },
+    {
+      "id": "ranking",
+      "lane": "run",
+      "col": 4,
+      "type": "backend",
+      "label": "Ranking Service",
+      "sublabel": "warm, then /score",
+      "width": 140
+    },
+    {
+      "id": "guardrail",
+      "lane": "guard",
+      "col": 5,
+      "type": "security",
+      "label": "Guardrail Loop",
+      "sublabel": "degraded rate, p95",
+      "width": 140
+    },
+    {
+      "id": "rollback",
+      "lane": "guard",
+      "col": 4,
+      "type": "security",
+      "label": "Auto Rollback",
+      "sublabel": "previous or baseline",
+      "tag": "audited",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-job",
+      "from": "request",
+      "to": "dataset",
+      "label": "job",
+      "variant": "emphasis"
+    },
+    {
+      "id": "build-train",
+      "from": "dataset",
+      "to": "trainer",
+      "variant": "emphasis"
+    },
+    {
+      "id": "train-gates",
+      "from": "trainer",
+      "to": "gates",
+      "variant": "emphasis"
+    },
+    {
+      "id": "log-run",
+      "from": "trainer",
+      "to": "mlflow",
+      "label": "log run",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "record",
+      "from": "gates",
+      "to": "registry",
+      "label": "record",
+      "variant": "emphasis"
+    },
+    {
+      "id": "approve",
+      "from": "registry",
+      "to": "promote",
+      "label": "gated only",
+      "variant": "security"
+    },
+    {
+      "id": "deploy",
+      "from": "promote",
+      "to": "api",
+      "label": "deployment",
+      "variant": "emphasis"
+    },
+    {
+      "id": "score",
+      "from": "api",
+      "to": "ranking",
+      "label": "score",
+      "variant": "emphasis",
+      "role": "branch"
+    },
+    {
+      "id": "stats",
+      "from": "api",
+      "to": "guardrail",
+      "label": "stats",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "breach",
+      "from": "guardrail",
+      "to": "rollback",
+      "label": "breach",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Training",
+      "items": [
+        "Same pure ledger as the stream, so features match serving",
+        "Every run logged to MLflow, pass or fail"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Promotion",
+      "items": [
+        "Gates must pass; feature schema must match serving",
+        "Maker-checker: ML Engineer trains, Approver promotes"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Rollback",
+      "items": [
+        "Guardrail per model version, one replica acts via Redis lock",
+        "Rollback invalidates cached recommendations"
+      ]
+    }
+  ]
+}

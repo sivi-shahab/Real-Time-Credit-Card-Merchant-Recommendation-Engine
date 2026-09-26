@@ -1,0 +1,320 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "Data Ingestion Pipeline",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Event to online state",
+        "focus": [
+          "files",
+          "sim",
+          "topic",
+          "guards",
+          "ledger",
+          "redis",
+          "api"
+        ],
+        "note": "A replayed transaction passes the guard chain, updates the ledger, and lands in Redis."
+      },
+      {
+        "id": "quarantine",
+        "label": "Quarantine",
+        "focus": [
+          "topic",
+          "guards",
+          "dlq"
+        ],
+        "note": "Rejected events are logged and sent verbatim to pipeline.dlq."
+      },
+      {
+        "id": "master-data",
+        "label": "Master data + audit",
+        "focus": [
+          "gen",
+          "files",
+          "pg",
+          "ledger"
+        ],
+        "note": "Generated catalogs load into Postgres; every outcome is logged there."
+      }
+    ],
+    "viewBox": [
+      1070,
+      640
+    ],
+    "legend": {
+      "entries": {
+        "emphasis": {
+          "label": "main event path"
+        },
+        "security": {
+          "label": "dead letter"
+        },
+        "dashed": {
+          "label": "derived / batch"
+        },
+        "default": {
+          "label": "audit log"
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "label": "Generate"
+    },
+    {
+      "label": "Replay + transit"
+    },
+    {
+      "label": "Feature engine"
+    },
+    {
+      "label": "State + outputs"
+    },
+    {
+      "label": "Consumers"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "gen",
+      "type": "backend",
+      "label": "Dataset Generator",
+      "sublabel": "seeded, faults injected",
+      "stage": 0,
+      "row": 0,
+      "tag": "POST /datasets",
+      "width": 128
+    },
+    {
+      "id": "files",
+      "type": "database",
+      "label": "Dataset Files",
+      "sublabel": "data/<datasetId>/*.jsonl",
+      "stage": 0,
+      "row": 1,
+      "tag": "manifest + sha256",
+      "width": 128
+    },
+    {
+      "id": "sim",
+      "type": "backend",
+      "label": "Replay Simulator",
+      "sublabel": "target TPS, checkpoint",
+      "stage": 1,
+      "row": 1,
+      "tag": "pause / resume",
+      "width": 128
+    },
+    {
+      "id": "topic",
+      "type": "messagebus",
+      "label": "cc.transactions",
+      "sublabel": "6 partitions",
+      "stage": 1,
+      "row": 2,
+      "tag": "key: customerId",
+      "width": 128
+    },
+    {
+      "id": "guards",
+      "type": "security",
+      "label": "Guard Chain",
+      "sublabel": "erasure, schema, dedup",
+      "stage": 2,
+      "row": 2,
+      "tag": "AC-009 first",
+      "width": 128
+    },
+    {
+      "id": "ledger",
+      "type": "backend",
+      "label": "Ledger + Features",
+      "sublabel": "pure apply_event",
+      "stage": 2,
+      "row": 1,
+      "tag": "ADR-0002",
+      "width": 128
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "customer state + features",
+      "brand": "redis",
+      "stage": 3,
+      "row": 1,
+      "tag": "cache invalidated",
+      "width": 128
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "master data + tx log",
+      "brand": "postgresql",
+      "stage": 3,
+      "row": 0,
+      "tag": "batched writes",
+      "width": 128
+    },
+    {
+      "id": "dlq",
+      "type": "messagebus",
+      "label": "pipeline.dlq",
+      "sublabel": "rejected events",
+      "stage": 3,
+      "row": 3,
+      "tag": "rejectCode",
+      "width": 128
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "online features",
+      "stage": 4,
+      "row": 1,
+      "width": 128
+    },
+    {
+      "id": "features",
+      "type": "messagebus",
+      "label": "customer.features",
+      "sublabel": "feature version",
+      "stage": 3,
+      "row": 2,
+      "tag": "fire-and-forget",
+      "width": 128
+    }
+  ],
+  "flows": [
+    {
+      "from": "gen",
+      "to": "files",
+      "label": "write",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "files",
+      "to": "sim",
+      "label": "events",
+      "variant": "emphasis"
+    },
+    {
+      "from": "sim",
+      "to": "topic",
+      "label": "produce",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "from": "topic",
+      "to": "guards",
+      "label": "consume",
+      "variant": "emphasis"
+    },
+    {
+      "from": "guards",
+      "to": "ledger",
+      "label": "valid",
+      "variant": "emphasis"
+    },
+    {
+      "from": "guards",
+      "to": "dlq",
+      "label": "quarantine",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "via": [
+        [
+          530,
+          499
+        ]
+      ]
+    },
+    {
+      "from": "ledger",
+      "to": "redis",
+      "label": "save",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "ledger",
+      "to": "pg",
+      "label": "log",
+      "fromSide": "top",
+      "toSide": "left",
+      "via": [
+        [
+          530,
+          157
+        ]
+      ]
+    },
+    {
+      "from": "ledger",
+      "to": "features",
+      "label": "notify",
+      "variant": "dashed"
+    },
+    {
+      "from": "redis",
+      "to": "api",
+      "label": "read",
+      "variant": "emphasis"
+    },
+    {
+      "from": "gen",
+      "to": "pg",
+      "label": "master data",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "top",
+      "via": [
+        [
+          100,
+          104
+        ],
+        [
+          745,
+          104
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "amber",
+      "title": "Contracts",
+      "items": [
+        "Avro schemas in contracts/avro, compatibility checked in CI",
+        "Envelope validated before any state change"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Exactly-once effect",
+      "items": [
+        "Redis claim on eventId dedups redelivery",
+        "Ledger rejects and invariant breaks also quarantine"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Recovery",
+      "items": [
+        "rebuild_state.py replays the log into Redis",
+        "reconcile.py checks online vs offline (AC-008)"
+      ]
+    }
+  ]
+}
