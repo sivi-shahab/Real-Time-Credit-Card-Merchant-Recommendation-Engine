@@ -59,7 +59,7 @@ host, not the design. Raw results: `docs/perf/results.jsonl`.
 | Target | Result | Status |
 |---|---|---|
 | API p95 < 200 ms | 8 concurrent clients: 162 rps, p50 46 ms, **p95 72 ms**, 0 errors. 32 clients: p95 1 s (host saturated, one uvicorn worker) | PARTIAL |
-| Ingestion 10 000 TPS steady / 20 000 burst | **~210 events/s** per consumer on this host; Redis round trips are the ceiling after the Postgres per-event fsync was removed (batched log: 1 transaction per batch) | OPEN |
+| Ingestion 10 000 TPS steady / 20 000 burst | **~220 events/s** per consumer process on this host (`scripts/loadtest.py ingest`). The consumer is CPU-bound, not Redis-bound: 12–14 s of CPU in a 14–16 s run, Redis at <1% CPU, ~1 ms RTT. The cost is spread over asyncio and the redis-py client, with no single hotspot; hiredis and uvloop each gave <10%. Redis round trips per event cut from 5 to 2 (one pipeline to admit, one transaction to save and invalidate), +10–15% here, more where Redis is across a network. 10k TPS needs about 45 consumer processes across ≥45 partitions (local topic: 6), or a hot path outside Python | OPEN |
 | On-demand ranking p95 < 500 ms | guardrail enforces it live (p95 bucket, auto-rollback); in-process predict 0.7 ms p95 | PARTIAL |
 
 What changed in Fase 5: transaction log batched per consumer batch; cache-hit path no

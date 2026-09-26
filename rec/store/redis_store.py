@@ -29,6 +29,27 @@ def _client() -> redis.Redis:
                           max_connections=settings.redis_max_connections)
 
 
+def _parse_state(customer_id: str, raw: dict[str, str]) -> CustomerState:
+    state = CustomerState(customerId=customer_id)
+    for field, value in raw.items():
+        if field.startswith("b:"):
+            day, cat, merch = field[2:].split("|", 2)
+            count, net = value.split(",")
+            state.buckets[(day, cat, merch)] = [int(count), int(net)]
+        elif field.startswith("t:"):
+            day, cat, merch, amount, refunded, rev = value.split("|", 5)
+            state.txns[field[2:]] = TxnRecord(
+                day, cat, merch, int(amount), int(refunded), rev == "1"
+            )
+        elif field.startswith("h:"):
+            state.hours[int(field[2:])] = int(value)
+        elif field == "lastEventOccurredAt" and value:
+            state.lastEventOccurredAt = datetime.fromisoformat(value)
+        elif field == "featureVersion":
+            state.featureVersion = int(value)
+    return state
+
+
 class OnlineStore:
     def __init__(self, client: redis.Redis | None = None):
         self.r = client or _client()
@@ -44,28 +65,30 @@ class OnlineStore:
 
     # ---------------------------------------------------------- state
     async def load(self, customer_id: str) -> CustomerState:
-        raw = await self.r.hgetall(STATE_PREFIX + customer_id)
-        state = CustomerState(customerId=customer_id)
-        for field, value in raw.items():
-            if field.startswith("b:"):
-                day, cat, merch = field[2:].split("|", 2)
-                count, net = value.split(",")
-                state.buckets[(day, cat, merch)] = [int(count), int(net)]
-            elif field.startswith("t:"):
-                day, cat, merch, amount, refunded, rev = value.split("|", 5)
-                state.txns[field[2:]] = TxnRecord(
-                    day, cat, merch, int(amount), int(refunded), rev == "1"
-                )
-            elif field.startswith("h:"):
-                state.hours[int(field[2:])] = int(value)
-            elif field == "lastEventOccurredAt" and value:
-                state.lastEventOccurredAt = datetime.fromisoformat(value)
-            elif field == "featureVersion":
-                state.featureVersion = int(value)
-        return state
+        return _parse_state(customer_id, await self.r.hgetall(STATE_PREFIX + customer_id))
+
+    async def admit(self, customer_id: str | None,
+                    event_id: str | None) -> tuple[bool, bool, CustomerState | None]:
+        """One round trip for the ingest hot path: (erased, claimed, state).
+
+        The claim and state read happen only when `event_id` is given, i.e. for a valid
+        event of a known customer. A claim made for an erased customer is left to expire:
+        erasure is permanent, so that event can never need applying.
+        """
+        async with self.r.pipeline(transaction=False) as pipe:
+            pipe.sismember(ERASED_KEY, customer_id or "")
+            if event_id is not None:
+                pipe.set(DEDUP_PREFIX + event_id, "1", nx=True, ex=settings.dedup_ttl_seconds)
+                pipe.hgetall(STATE_PREFIX + customer_id)
+            result = await pipe.execute()
+        if event_id is None:
+            return bool(result[0]), False, None
+        return bool(result[0]), bool(result[1]), _parse_state(customer_id, result[2])
 
     async def save(self, state: CustomerState, as_of: datetime) -> None:
-        """Persist only the fields this event touched, plus anything pruned."""
+        """Persist only the fields this event touched, plus anything pruned, and drop the
+        customer's cached recommendations (SERV-004) — one round trip unless some are
+        cached."""
         prune(state, as_of)
         key = STATE_PREFIX + state.customerId
         mapping = {
@@ -91,12 +114,16 @@ class OnlineStore:
         removed = [f"b:{d}|{c}|{m}" for d, c, m in state.removedBuckets]
         removed += [f"t:{t}" for t in state.removedTxns]
 
+        index = CACHE_INDEX_PREFIX + state.customerId
         async with self.r.pipeline(transaction=True) as pipe:
             pipe.hset(key, mapping=mapping)
             if removed:
                 pipe.hdel(key, *removed)
-            await pipe.execute()
+            pipe.smembers(index)
+            cached = (await pipe.execute())[-1]
         state.clear_dirty()
+        if cached:
+            await self.r.delete(*[CACHE_PREFIX + k for k in cached], index)
 
     async def features(self, customer_id: str, as_of: datetime | None = None,
                        merchant_city: dict[str, str] | None = None) -> dict:

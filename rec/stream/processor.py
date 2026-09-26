@@ -59,22 +59,31 @@ class FeatureProcessor:
         self._log_rows.append(pg.transaction_row(raw, outcome, code, detail))
 
     async def _handle(self, raw: dict, now: datetime) -> str:
-        # AC-009 before anything else, invalid events included: quarantining logs the
-        # raw envelope, which would re-store the very data that was erased.
         payload = raw.get("payload")
         raw_customer = payload.get("customerId") if isinstance(payload, dict) else None
-        if isinstance(raw_customer, str) and await self.store.is_erased(raw_customer):
-            self._counts["events_erased_customer"] += 1
-            return "ERASED_CUSTOMER"
         try:
             env = Envelope.model_validate(raw)
             env.transaction()
+            invalid = None
         except ValidationError as exc:
-            await self._quarantine(raw, "SCHEMA_INVALID", str(exc)[:500])
+            env, invalid = None, exc
+        # Known before claiming: a claim for an unknown customer would turn the DLQ replay
+        # of that event, once the customer exists, into a DUPLICATE_EVENT.
+        known = env is not None and await self._customer_known(env.payload["customerId"])
+        erased, claimed, state = await self.store.admit(
+            raw_customer if isinstance(raw_customer, str) else None,
+            env.eventId if known else None)
+        # AC-009 before anything else, invalid events included: quarantining logs the
+        # raw envelope, which would re-store the very data that was erased.
+        if erased:
+            self._counts["events_erased_customer"] += 1
+            return "ERASED_CUSTOMER"
+        if invalid is not None:
+            await self._quarantine(raw, "SCHEMA_INVALID", str(invalid)[:500])
             return "SCHEMA_INVALID"
 
         customer_id = env.payload["customerId"]
-        if not await self._customer_known(customer_id):
+        if not known:
             if customer_id in await pg.erased_customers():
                 # Redis lost its tombstone copy (e.g. before a rebuild): Postgres decides.
                 await self.store.load_tombstones([customer_id])
@@ -83,12 +92,11 @@ class FeatureProcessor:
             await self._quarantine(raw, "UNKNOWN_CUSTOMER", customer_id)
             return "UNKNOWN_CUSTOMER"
 
-        if not await self.store.claim_event(env.eventId):
+        if not claimed:
             self._log(raw, "DUPLICATE_EVENT")
             self._counts["events_duplicate"] += 1
             return "DUPLICATE_EVENT"
 
-        state = await self.store.load(customer_id)
         try:
             outcome = apply_event(state, env, now=now)
         except Reject as exc:
@@ -104,8 +112,7 @@ class FeatureProcessor:
         if lateness > timedelta(hours=LATE_ARRIVAL_LIMIT_HOURS):
             self._counts["events_late_backfill"] += 1
 
-        await self.store.save(state, now)
-        await self.store.invalidate_customer(customer_id)  # SERV-004
+        await self.store.save(state, now)  # also drops cached recommendations (SERV-004)
         self._log(raw, outcome)
         self._counts["events_applied" if outcome == "APPLIED" else "events_duplicate"] += 1
         await self._emit_feature_update(customer_id, state.featureVersion)

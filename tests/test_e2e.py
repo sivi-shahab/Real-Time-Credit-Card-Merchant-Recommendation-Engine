@@ -1397,3 +1397,31 @@ async def test_simulator_never_skips_an_event_when_the_broker_fails(client, data
     assert status_["status"] == "COMPLETED"
     replay = (dataset[0] / "replay.jsonl").read_text().splitlines()
     assert [v.decode().rstrip("\n") for v in sent] == replay, "every event once, in order"
+
+
+async def test_an_ingested_event_drops_the_customers_cached_recommendations(client, replayed):
+    """SERV-004 on the ingest path, and no dedup claim for a customer not yet known."""
+    import uuid
+
+    out = replayed[0]
+    raw = next(json.loads(line) for line in (out / "replay.jsonl").read_text().splitlines()
+               if json.loads(line)["injectedFault"] is None)
+    cid = raw["payload"]["customerId"]
+    url, auth = (f"/api/v1/customer/{cid}/recommendations",
+                 {"Authorization": f"Bearer cust-{cid}"})
+    await client.get(url, headers=auth)
+    assert (await client.get(url, headers=auth)).json()["source"] == "CACHE"
+
+    fresh = json.loads(json.dumps(raw))
+    fresh["eventId"] = str(uuid.uuid4())
+    fresh["payload"]["transactionId"] = str(uuid.uuid4())
+    processor = FeatureProcessor(store, producer=None)
+    assert await processor.handle(fresh, now=REF + timedelta(hours=1)) == "APPLIED"
+    assert (await client.get(url, headers=auth)).json()["source"] != "CACHE"
+
+    stranger = json.loads(json.dumps(fresh))
+    stranger["eventId"] = str(uuid.uuid4())
+    stranger["payload"]["customerId"] = "C9999999"
+    assert await processor.handle(stranger, now=REF + timedelta(hours=1)) == "UNKNOWN_CUSTOMER"
+    assert not await store.r.exists("evt:" + stranger["eventId"]), \
+        "a DLQ replay after the customer is created must not be a DUPLICATE_EVENT"
