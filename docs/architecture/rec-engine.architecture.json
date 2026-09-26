@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Credit Card Merchant Recommendation Engine",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1270,
+      520
+    ],
+    "repository": {
+      "url": "https://github.com/sivi-shahab/Real-Time-Credit-Card-Merchant-Recommendation-Engine",
+      "provider": "github",
+      "link_mode": "local-only",
+      "revision": "fd0cdaf0d1d17ddc294bfe15e435f4ca36271a1b"
+    },
+    "views": [
+      {
+        "id": "ingest",
+        "label": "Event ingest",
+        "focus": [
+          "simulator",
+          "kafka",
+          "stream",
+          "redis",
+          "postgres"
+        ],
+        "note": "Transactions replay through Kafka into the feature engine, which updates online state."
+      },
+      {
+        "id": "serve",
+        "label": "Recommendation serving",
+        "focus": [
+          "dashboard",
+          "api",
+          "redis",
+          "postgres",
+          "ranking"
+        ],
+        "note": "The API builds candidates from Redis and Postgres, then scores them in the ranking service."
+      },
+      {
+        "id": "ml",
+        "label": "Model lifecycle",
+        "focus": [
+          "api",
+          "models",
+          "ranking",
+          "postgres"
+        ],
+        "note": "Training jobs log to MLflow and the registry; ranking loads the promoted booster."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "simulator",
+      "type": "external",
+      "label": "Replay Simulator",
+      "sublabel": "rec.simulator",
+      "pos": [
+        40,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/simulator/runner.py",
+          "line": 130
+        }
+      ]
+    },
+    {
+      "id": "kafka",
+      "type": "messagebus",
+      "label": "Kafka",
+      "sublabel": "KRaft \u00b7 6 partitions",
+      "brand": "apache-kafka",
+      "pos": [
+        300,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "stream",
+      "type": "backend",
+      "label": "Feature Engine",
+      "sublabel": "rec.stream (aiokafka)",
+      "pos": [
+        560,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/stream/processor.py",
+          "line": 150
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis",
+      "sublabel": "online features :6379",
+      "brand": "redis",
+      "pos": [
+        560,
+        220
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/store/redis_store.py"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "ledger \u00b7 catalog \u00b7 registry",
+      "brand": "postgresql",
+      "pos": [
+        820,
+        220
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/store/pg.py"
+        }
+      ]
+    },
+    {
+      "id": "dashboard",
+      "type": "frontend",
+      "label": "Ops Console",
+      "sublabel": "Vue 3 + nginx :5173",
+      "pos": [
+        40,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Recommendation API",
+      "sublabel": "FastAPI :8000 \u00b7 BFF",
+      "pos": [
+        560,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "RBAC + CSRF",
+      "sources": [
+        {
+          "path": "rec/api/app.py"
+        },
+        {
+          "path": "rec/api/service.py"
+        }
+      ]
+    },
+    {
+      "id": "keycloak",
+      "type": "security",
+      "label": "Keycloak",
+      "sublabel": "OIDC realm rec",
+      "pos": [
+        300,
+        220
+      ],
+      "size": [
+        150,
+        64
+      ]
+    },
+    {
+      "id": "ranking",
+      "type": "backend",
+      "label": "Ranking Service",
+      "sublabel": "XGBoost LTR :8100",
+      "pos": [
+        820,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/ranking/service.py",
+          "line": 86
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "type": "database",
+      "label": "Model Store",
+      "sublabel": "MLflow + data/models",
+      "pos": [
+        1080,
+        380
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "sources": [
+        {
+          "path": "rec/ml/train.py",
+          "line": 254
+        },
+        {
+          "path": "rec/ml/registry.py"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "replay",
+      "from": "simulator",
+      "to": "kafka",
+      "label": "cc.transactions",
+      "variant": "emphasis"
+    },
+    {
+      "id": "consume",
+      "from": "kafka",
+      "to": "stream",
+      "label": "consume",
+      "variant": "emphasis"
+    },
+    {
+      "id": "online-state",
+      "from": "stream",
+      "to": "redis",
+      "label": "features",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "tx-log",
+      "from": "stream",
+      "to": "postgres",
+      "label": "tx log"
+    },
+    {
+      "id": "console",
+      "from": "dashboard",
+      "to": "api",
+      "label": "/api /bff (session)"
+    },
+    {
+      "id": "read-features",
+      "from": "api",
+      "to": "redis",
+      "label": "read"
+    },
+    {
+      "id": "read-sql",
+      "from": "api",
+      "to": "postgres",
+      "label": "SQL"
+    },
+    {
+      "id": "sso",
+      "from": "api",
+      "to": "keycloak",
+      "label": "OIDC",
+      "variant": "security"
+    },
+    {
+      "id": "score",
+      "from": "api",
+      "to": "ranking",
+      "label": "POST /score",
+      "labelDy": 18
+    },
+    {
+      "id": "load-model",
+      "from": "ranking",
+      "to": "models",
+      "label": "load"
+    },
+    {
+      "id": "train",
+      "from": "api",
+      "to": "models",
+      "label": "train",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [
+        [
+          635,
+          480
+        ],
+        [
+          1155,
+          480
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Ingest",
+      "items": [
+        "Simulator replays synthetic transactions to cc.transactions",
+        "Feature engine emits customer.features; bad events go to pipeline.dlq"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Serving",
+      "items": [
+        "Candidates + promo eligibility from Redis and Postgres",
+        "Baseline or XGBoost LTR, shadow/canary rollout"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Security & ops",
+      "items": [
+        "Browser holds only an HttpOnly BFF session",
+        "Maker-checker erasure, audit trail"
+      ]
+    }
+  ]
+}
