@@ -5,6 +5,7 @@ Uses a small generated dataset; no Postgres, Redis or Kafka.
 from __future__ import annotations
 
 import json
+import math
 from datetime import timedelta
 from pathlib import Path
 
@@ -162,6 +163,16 @@ def test_baseline_score_matches_the_production_formula(built):
 
 
 # ----------------------------------------------------------------- reproducibility
+
+
+def test_unbiased_lambdamart_recovers_the_generators_position_bias(dataset_dir, tmp_path):
+    """The generator discounts clicks by 1/log2(position+2) (SYN-004). A debiased model
+    must estimate that curve from the logs; rows out of shown order would scramble it."""
+    clicked = train(dataset_dir, out_dir=tmp_path,
+                    mlflow_tracking_uri=None).artifacts["positionBias"]["clicked"]
+    truth = [1 / math.log2(p + 2) for p in range(len(clicked))]
+    assert clicked[0] == 1.0 and clicked[-1] < clicked[1] < clicked[0]
+    assert sum(abs(a - b) for a, b in zip(clicked, truth)) / len(truth) < 0.08
 
 
 def test_training_is_reproducible_and_reports_its_gates(dataset_dir, tmp_path):

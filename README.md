@@ -223,7 +223,7 @@ logging, cursor pagination and envelope redaction have their own tests in the sa
 feedback events -> labels (ML-003) -> exposures + attribution (ML-004)
                -> point-in-time feature join on an event-time timeline (ML-005)
                -> temporal split with an observation-window gap
-               -> XGBoost rank:ndcg  vs  the live baseline formula
+               -> XGBoost unbiased LambdaMART (position-debiased)  vs  the live baseline
                -> evaluation gates (ML-006) -> MLflow run + registry
                -> Approver promotes: SHADOW | CANARY n% | FULL
                -> serving calls the Ranking Service; any failure falls back to baseline
@@ -238,6 +238,12 @@ something the baseline does not — on synthetic data it says nothing about busi
 top-10 cut keeps the whole slate: `recall@10` is trivially 1.0 and coverage/diversity @10
 are identical for every ranker. The training metadata carries this caveat explicitly
 (`lineage.metricCaveat`) and the dashboard renders it.
+
+**Position debiasing** ([ADR-0008](docs/adr/0008-position-debiasing.md)). Clicks favour
+the top of a slate, so training uses XGBoost's unbiased LambdaMART, which estimates the
+click propensity per position and discounts by it. On the generator's data it recovers
+the known `1/log2(position+2)` curve within MAE 0.03; each model stores its curve as
+`artifacts.positionBias`.
 
 **Continuous learning** ([ADR-0007](docs/adr/0007-continuous-learning.md)). Set
 `AUTO_RETRAIN_INTERVAL_HOURS` (off by default) and the API retrains on live feedback from

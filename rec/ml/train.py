@@ -30,6 +30,11 @@ DEFAULT_PARAMS = {
     "eval_metric": ["ndcg@10"],
     "lambdarank_pair_method": "topk",
     "lambdarank_num_pair_per_sample": 8,
+    # Unbiased LambdaMART (ADR-0008): clicks are discounted by display position, which
+    # the model estimates jointly. Norm 0.5 recovered the generator's known position curve
+    # within MAE 0.03; the default 1.0 flattened it (MAE 0.11).
+    "lambdarank_unbiased": True,
+    "lambdarank_bias_norm": 0.5,
     "eta": 0.08,
     "max_depth": 6,
     "min_child_weight": 5,
@@ -83,8 +88,9 @@ def baseline_score(frame: pd.DataFrame) -> pd.Series:
 
 
 def _dmatrix(frame: pd.DataFrame) -> xgb.DMatrix:
-    """Rows must be contiguous per group for XGBoost's group sizes to mean anything."""
-    ordered = frame.sort_values(GROUP_COLUMN, kind="mergesort")
+    """Rows must be contiguous per group for XGBoost's group sizes to mean anything, and
+    in shown order inside a group: `lambdarank_unbiased` reads row order as position."""
+    ordered = frame.sort_values([GROUP_COLUMN, "position"], kind="mergesort")
     sizes = ordered.groupby(GROUP_COLUMN, sort=True).size().to_numpy()
     matrix = xgb.DMatrix(ordered[list(FEATURE_NAMES)].to_numpy(dtype=np.float32),
                          label=ordered[LABEL_COLUMN].to_numpy(dtype=np.float32),
@@ -153,6 +159,7 @@ def train(
     model_path = out_dir / f"{model_version}.json"
     booster.save_model(model_path)
     importance = booster.get_score(importance_type="gain")
+    objective = json.loads(booster.save_config())["learner"]["objective"]
 
     result = TrainingResult(
         modelVersion=model_version,
@@ -179,6 +186,9 @@ def train(
             "model": str(model_path),
             "featureImportanceGain": dict(sorted(importance.items(), key=lambda kv: -kv[1])),
             "learningCurve": evals_result,
+            # Estimated relative click propensity by display position (index 0 = top).
+            "positionBias": {"clicked": objective["ti+"], "unclicked": objective["tj-"]}
+            if "ti+" in objective else None,
         },
     )
 
@@ -270,6 +280,8 @@ def _log_to_mlflow(result: TrainingResult, booster: xgb.Booster,
         mlflow.log_dict({g.name: {"passed": g.passed, "detail": g.detail}
                          for g in result.gates}, "gates.json")
         mlflow.log_dict(result.artifacts["featureImportanceGain"], "feature_importance.json")
+        if result.artifacts.get("positionBias"):
+            mlflow.log_dict(result.artifacts["positionBias"], "position_bias.json")
         mlflow.log_artifact(result.artifacts["model"])
         mlflow.set_tag("approved", str(result.approved))
         try:
