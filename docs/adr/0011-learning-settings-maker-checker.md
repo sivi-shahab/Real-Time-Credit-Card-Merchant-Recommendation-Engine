@@ -29,5 +29,6 @@ them first, and turning a loop on needed a restart.
   Going live should include one approved change, even if it restates the env values.
 - An Approver stands in for the business and legal sign-off a promo holdout needs; the
   release gate still asks for that sign-off before the split goes above 0.
-- Pending requests do not expire; a stale one must be rejected by hand.
+- A request left pending for 7 days expires (audited as `system:learning-settings`): it
+  was judged on values that may have moved, and it would block every other request.
 - A replica can serve up to 15 s on the previous values after an approval.

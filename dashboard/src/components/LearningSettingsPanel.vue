@@ -37,6 +37,9 @@ const { data, isPending, error } = useQuery({
   refetchInterval: 15_000,
 })
 const pending = computed(() => data.value?.requests?.find((r: any) => r.status === 'PENDING'))
+const expiresAt = computed(() => pending.value && new Date(
+  new Date(pending.value.requested_at).getTime()
+  + data.value.requestTtlDays * 86_400_000).toISOString())
 
 const draft = reactive<Record<string, any>>({})
 const reason = ref('')
@@ -80,7 +83,8 @@ function confirmDecision(approve: boolean) {
 }
 const show = (v: any) => (typeof v === 'boolean' ? (v ? 'ya' : 'tidak') : String(v))
 const statusSeverity = (s: string) =>
-  ({ APPROVED: 'success', REJECTED: 'danger', PENDING: 'warn' } as any)[s] ?? 'secondary'
+  ({ APPROVED: 'success', REJECTED: 'danger', PENDING: 'warn', EXPIRED: 'secondary' } as any)[s]
+  ?? 'secondary'
 </script>
 
 <template>
@@ -129,7 +133,7 @@ const statusSeverity = (s: string) =>
           <h3>Menunggu persetujuan</h3>
           <p class="sub">
             Diajukan oleh <b>{{ pending.requested_by }}</b>, {{ when(pending.requested_at) }}:
-            “{{ pending.reason }}”
+            “{{ pending.reason }}”. Kedaluwarsa {{ when(expiresAt) }} bila belum diputuskan.
           </p>
           <table class="plain">
             <thead><tr><th>Pengaturan</th><th>Sekarang</th><th>Menjadi</th></tr></thead>

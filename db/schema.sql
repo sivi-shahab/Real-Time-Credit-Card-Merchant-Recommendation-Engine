@@ -258,11 +258,16 @@ CREATE TABLE IF NOT EXISTS learning_setting_requests (
   reason       TEXT NOT NULL,
   requested_by TEXT NOT NULL,
   requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  status       TEXT NOT NULL DEFAULT 'PENDING'
-               CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
+  status       TEXT NOT NULL DEFAULT 'PENDING',
   decided_by   TEXT,
   decided_at   TIMESTAMPTZ,
   note         TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS learning_one_pending
   ON learning_setting_requests ((true)) WHERE status = 'PENDING';
+-- Pending requests expire (ADR-0011). Re-created each start so databases made before
+-- EXPIRED existed get it too.
+ALTER TABLE learning_setting_requests
+  DROP CONSTRAINT IF EXISTS learning_setting_requests_status_check;
+ALTER TABLE learning_setting_requests ADD CONSTRAINT learning_setting_requests_status_check
+  CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'));

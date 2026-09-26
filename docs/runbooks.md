@@ -86,6 +86,7 @@ customers at once (request it; see learning-switches).
 Change a learning setting on the dashboard (Pembelajaran → Pengaturan pembelajaran) or
 `POST /admin/v1/learning/settings/requests`: an ML Engineer or Platform Operator files it
 with a reason, an Approver decides. It applies to every replica within 15 s, no restart.
+A request nobody decides within 7 days expires; file it again if it still stands.
 After the first approval env no longer decides any switch (ADR-0011).
 
 `LearningSwitchChanged`: a replica's value changed. Expected right after an approval (the

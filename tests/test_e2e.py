@@ -1023,6 +1023,33 @@ async def test_rejected_or_invalid_learning_changes_apply_nothing(client, replay
     assert settings.promo_holdout_percent == before
 
 
+async def test_a_stale_learning_request_expires_and_frees_the_queue(client, replayed,
+                                                                    learning_state):
+    """A request pending past the TTL was judged on values that may have moved: it
+    expires (audited), cannot be approved, and no longer blocks a new request."""
+    conn = learning_state
+    filed = await client.post("/admin/v1/learning/settings/requests", headers=ML, json={
+        "changes": {"promo_holdout_percent": 20}, "reason": "old plan"})
+    rid = filed.json()["requestId"]
+    await conn.execute(
+        """UPDATE learning_setting_requests SET requested_at = now() - interval '8 days'
+           WHERE request_id = $1""", rid)
+    before = settings.promo_holdout_percent
+
+    view = (await client.get("/admin/v1/learning/settings", headers=ANALYST)).json()
+    assert view["requestTtlDays"] == 7
+    assert next(r for r in view["requests"] if r["request_id"] == rid)["status"] == "EXPIRED"
+    assert (await client.post(f"/admin/v1/learning/settings/requests/{rid}/decision",
+                              headers=APPROVER, json={"approve": True})).status_code == 409
+    assert settings.promo_holdout_percent == before
+    assert await conn.fetchval(
+        """SELECT count(*) FROM audit_events WHERE action = 'learning.change.expire'
+             AND resource = $1 AND actor = 'system:learning-settings'""",
+        f"learningSettings/{rid}") == 1
+    assert (await client.post("/admin/v1/learning/settings/requests", headers=ML, json={
+        "changes": {"promo_holdout_percent": 10}, "reason": "new plan"})).status_code == 201
+
+
 async def test_env_cannot_move_a_switch_past_an_approved_value(client, replayed,
                                                                learning_state):
     """Once a change is approved the stored full set wins: a deploy that sets a different

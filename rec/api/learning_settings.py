@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import timedelta
 
 import asyncpg
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +23,8 @@ from rec.store import pg
 
 log = logging.getLogger("learning_settings")
 REFRESH_SECONDS = 15
+REQUEST_TTL = timedelta(days=7)  # a pending change older than this no longer applies
+EXPIRY_ACTOR = "system:learning-settings"
 
 
 class LearningChanges(BaseModel):
@@ -83,11 +86,29 @@ async def loop() -> None:
             log.exception("learning settings refresh failed")
 
 
+async def expire_stale() -> list[str]:
+    """Lazily, on every read and write: a request left pending past `REQUEST_TTL` was
+    judged on values that may have changed since, so it expires instead of lingering
+    (and blocking every other request). Each expiry is audited."""
+    conn = await pg.pool()
+    rows = await conn.fetch(
+        """UPDATE learning_setting_requests SET status = 'EXPIRED', decided_at = now()
+           WHERE status = 'PENDING' AND requested_at < now() - $1::interval
+           RETURNING request_id, requested_by""", REQUEST_TTL)
+    for row in rows:
+        await pg.audit(EXPIRY_ACTOR, "System", "learning.change.expire",
+                       f"learningSettings/{row['request_id']}", outcome="AUTOMATIC",
+                       changes={"requestedBy": row["requested_by"],
+                                "ttlDays": REQUEST_TTL.days})
+    return [r["request_id"] for r in rows]
+
+
 async def request_change(changes: LearningChanges, reason: str, actor: str,
                          role: str) -> dict:
     wanted = changes.model_dump(exclude_none=True)
     if not wanted:
         raise Refused(422, "no setting to change")
+    await expire_stale()
     request_id = str(uuid.uuid4())
     conn = await pg.pool()
     try:
@@ -103,6 +124,7 @@ async def request_change(changes: LearningChanges, reason: str, actor: str,
 
 async def decide(request_id: str, approve: bool, note: str | None, actor: str,
                  role: str) -> dict:
+    await expire_stale()
     conn = await pg.pool()
     async with conn.acquire() as con, con.transaction():
         row = await con.fetchrow(
@@ -147,12 +169,14 @@ async def decide(request_id: str, approve: bool, note: str | None, actor: str,
 
 
 async def overview() -> dict:
+    await expire_stale()
     conn = await pg.pool()
     stored = await conn.fetchrow("SELECT * FROM learning_settings WHERE id = 1")
     requests = await conn.fetch(
         "SELECT * FROM learning_setting_requests ORDER BY requested_at DESC LIMIT 10")
     return {
         "effective": effective(),
+        "requestTtlDays": REQUEST_TTL.days,
         "source": "approved" if stored else "env",
         "version": stored["version"] if stored else None,
         "updatedBy": stored["updated_by"] if stored else None,

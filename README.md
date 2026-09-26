@@ -294,7 +294,7 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
   doubly robust evaluation of a new ranker (or the bandit) cannot be done offline. It needs
   a small randomised share of served slates, which changes what customers see.
 - **A scheduled uplift report.** The uplift report is produced by running
-  `python -m rec.ml.uplift` by hand; learning-setting requests do not expire.
+  `python -m rec.ml.uplift` by hand.
 - **A separate training worker.** Training, and Optuna tuning with it, runs in a thread of
   the API process; a large `tuneTrials` competes with serving on that replica.
 
