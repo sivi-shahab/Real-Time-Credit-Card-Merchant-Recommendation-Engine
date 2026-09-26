@@ -553,6 +553,12 @@ async def test_auto_trained_model_reaches_shadow_only_while_nothing_serves(
     await registry.promote("m-live-1", mode="FULL", canary_percent=100, actor="test")
     assert not await ml_jobs.shadow_if_idle("m-auto-2")
     assert (await registry.deployment())["model_version"] == "m-live-1"
+    # R-1/E-6: the automatic promotion is attributable to the system actor
+    conn = await pg.pool()
+    assert await conn.fetchval(
+        """SELECT count(*) FROM audit_events WHERE actor = 'system:auto-retrain'
+             AND action = 'model.promote' AND outcome = 'AUTOMATIC'
+             AND resource = 'model/m-auto-1'""") == 1
 
 
 async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
@@ -766,6 +772,32 @@ async def test_learning_status_reports_every_loop(client, replayed, monkeypatch)
         await conn.execute(
             "DELETE FROM promo_experiment WHERE customer_id IN ('C-arm-t', 'C-arm-h')")
         await conn.execute("DELETE FROM uplift_reports")
+
+
+async def test_feedback_is_accepted_only_from_the_customer_it_describes(client, replayed):
+    """T-7: feedback now trains models, so no staff role and no other customer may write
+    it for a customer."""
+    conn = await pg.pool()
+    cid = await conn.fetchval("SELECT customer_id FROM customers ORDER BY customer_id LIMIT 1")
+    impression = {"requestId": "req-t7", "customerId": cid,
+                  "items": [{"impressionId": "imp-t7", "merchantId": "M1", "position": 0}]}
+    click = {"impressionId": "imp-t7", "customerId": cid, "merchantId": "M1",
+             "interactionType": "CLICK"}
+    try:
+        for headers in (ADMIN, ANALYST, ML, {"Authorization": "Bearer viewer-token"},
+                        {"Authorization": "Bearer cust-someone-else"}):
+            assert (await client.post("/api/v1/feedback/impressions", json=impression,
+                                      headers=headers)).status_code == 403
+            assert (await client.post("/api/v1/feedback/interactions", json=click,
+                                      headers=headers)).status_code == 403
+        own = {"Authorization": f"Bearer cust-{cid}"}
+        assert (await client.post("/api/v1/feedback/impressions", json=impression,
+                                  headers=own)).status_code == 202
+        assert (await client.post("/api/v1/feedback/interactions", json=click,
+                                  headers=own)).status_code == 202
+    finally:
+        await conn.execute("DELETE FROM interactions WHERE impression_id = 'imp-t7'")
+        await conn.execute("DELETE FROM impressions WHERE impression_id = 'imp-t7'")
 
 
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):

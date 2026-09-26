@@ -22,7 +22,11 @@ production step remains · **OPEN** not met.
 | Static demo tokens dead outside dev | PASS | `test_static_tokens_are_dead_outside_dev` |
 | Dependency / SAST / SBOM in CI | PARTIAL | bandit, pip-audit (0 known vulns today), CycloneDX SBOM, `npm audit` in CI. Image signing and container scanning need the registry |
 | TLS everywhere, Kafka SASL/ACLs, Redis AUTH, encryption at rest | OPEN | local stack is plaintext; required config listed in `docs/runbooks.md` |
-| Threat model | PASS | [threat-model.md](threat-model.md): STRIDE per trust boundary; two findings fixed with tests (forgeable customer tokens now fail closed outside dev, model-version path traversal) |
+| Threat model | PASS | [threat-model.md](threat-model.md): STRIDE per trust boundary, including the learning features (ADR-0007 to ADR-0010); three findings fixed with tests (forgeable customer tokens now fail closed outside dev, model-version path traversal, feedback writable by any staff role for any customer) |
+| Feedback accepted only from the customer it describes (T-7) | PASS | `test_feedback_is_accepted_only_from_the_customer_it_describes` |
+| Automatic learning cannot put a model in front of customers without an Approver (E-6) | PASS | `test_auto_trained_model_reaches_shadow_only_while_nothing_serves` (also audited as `system:auto-retrain`), `test_rollback_never_puts_a_shadow_model_on_full_traffic` |
+| Bandit state is data, not code (T-9) | PARTIAL | JSON, not pickle: `test_state_round_trips_through_json_and_keeps_learning_identically`. Its integrity waits on Redis AUTH |
+| Live feedback bound to served responses; learning switches under change control (S-5, T-10) | OPEN | keep `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until both are closed |
 | Customer channel authentication (threat S-2) | OPEN | `cust-<id>` is a dev stand-in, refused outside local/test/ci; real mobile-channel token verification is not built |
 | Model artifact integrity between approval and load (T-4) | OPEN | record SHA-256 at training, verify at warm |
 | Event contracts: Avro + `BACKWARD_TRANSITIVE` in CI (EVT-004) | PASS | `tests/test_contracts.py`, `scripts/check_avro_compat.py` |
@@ -32,8 +36,10 @@ production step remains · **OPEN** not met.
 
 | Check | Status | Evidence |
 |---|---|---|
-| AC-009 erasure, maker-checker, not rematerialised by replay or reload | PASS | `test_ac009_erased_customer_is_not_rematerialised_by_replay` (includes invalid events for the erased id) |
-| Erasure scope beyond Postgres/Redis | PARTIAL | Kafka retention, on-disk datasets (filtered on read), old MLflow artifacts, immutable audit rows — legal to confirm (`docs/runbooks.md#erasure`) |
+| AC-009 erasure, maker-checker, not rematerialised by replay or reload | PASS | `test_ac009_erased_customer_is_not_rematerialised_by_replay` (includes invalid events for the erased id; also removes the promo-holdout arm and bandit contexts) |
+| Erasure scope beyond Postgres/Redis | PARTIAL | Kafka retention, on-disk datasets (filtered on read) including auto-retrain `live-*` exports, old MLflow artifacts, immutable audit rows — legal to confirm (`docs/runbooks.md#erasure`) |
+| Retention of auto-retrain exports (I-9) | OPEN | every run writes a full snapshot that nothing prunes |
+| Promo holdout withholds offers from real customers (ADR-0010) | OPEN | business and legal approval of size, duration and consumer-protection position before `PROMO_HOLDOUT_PERCENT > 0` |
 
 ## Audit
 
@@ -82,6 +88,8 @@ and one consumer per partition (6), and a real Kafka load generator.
 | Trace correlation | PARTIAL | `traceId` in every error, header, log line and audit row; no distributed tracing (OpenTelemetry) across services |
 | Runbooks | PASS | `docs/runbooks.md` |
 | Alert routing (pager), on-call rota, dashboards in the ops tool | OPEN | organisational |
+| Learning loops observable (auto-retrain runs, bandit learning, holdout exposure) | PARTIAL | state on the dashboard's Pembelajaran page (`test_learning_status_reports_every_loop`); no Prometheus metrics or alerts yet |
+| Training isolated from serving (D-7) | OPEN | training and Optuna tuning run in a thread of the API process |
 
 ## Sign-off
 

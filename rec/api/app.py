@@ -137,11 +137,18 @@ class ImpressionBatch(BaseModel):
     items: list[dict[str, Any]] = Field(default_factory=list)
 
 
+def _own_feedback(p: Principal, customer_id: str) -> None:
+    """Feedback trains models (ADR-0007), so only the customer it describes may send it.
+    No staff role has a reason to, and letting one would open a poisoning path (T-7)."""
+    if p.kind != "customer" or p.subject != customer_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "feedback is accepted only from the customer it describes")
+
+
 @app.post("/api/v1/feedback/impressions", status_code=202, tags=["feedback"])
 async def record_impressions(batch: ImpressionBatch,
                              p: Annotated[Principal, Depends(principal)]):
-    if p.kind == "customer" and p.subject != batch.customerId:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer mismatch")
+    _own_feedback(p, batch.customerId)
     conn = await pg.pool()
     await conn.executemany(
         """INSERT INTO impressions (impression_id, request_id, customer_id, merchant_id,
@@ -163,8 +170,7 @@ class Interaction(BaseModel):
 
 @app.post("/api/v1/feedback/interactions", status_code=202, tags=["feedback"])
 async def record_interaction(body: Interaction, p: Annotated[Principal, Depends(principal)]):
-    if p.kind == "customer" and p.subject != body.customerId:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "customer mismatch")
+    _own_feedback(p, body.customerId)
     conn = await pg.pool()
     await conn.execute(
         """INSERT INTO interactions (interaction_id, impression_id, customer_id, merchant_id,
