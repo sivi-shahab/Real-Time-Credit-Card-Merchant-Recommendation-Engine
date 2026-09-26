@@ -523,6 +523,76 @@ async def test_rollback_returns_to_previous_then_to_baseline(client, replayed,
                               headers=ANALYST)).status_code == 403
 
 
+async def test_rollback_never_puts_a_shadow_model_on_full_traffic(client, replayed,
+                                                                  baseline_deployment,
+                                                                  monkeypatch):
+    await _no_warm(monkeypatch)
+    await _register_fake_model("m-shadow-a")
+    await _register_fake_model("m-shadow-b")
+    await client.post("/admin/v1/models/m-shadow-a/promote", json={"mode": "SHADOW"},
+                      headers=APPROVER)
+    await client.post("/admin/v1/models/m-shadow-b/promote", json={"mode": "SHADOW"},
+                      headers=APPROVER)
+
+    back = await client.post("/admin/v1/models/m-shadow-b/rollback", headers=APPROVER)
+    assert back.json()["mode"] == "BASELINE" and back.json()["model_version"] is None
+
+
+async def test_auto_trained_model_reaches_shadow_only_while_nothing_serves(
+        replayed, baseline_deployment, monkeypatch):
+    from rec.api import ml_jobs
+    from rec.ml import registry
+
+    await _no_warm(monkeypatch)
+    for version in ("m-auto-1", "m-live-1", "m-auto-2"):
+        await _register_fake_model(version)
+
+    assert await ml_jobs.shadow_if_idle("m-auto-1")
+    assert (await registry.deployment())["mode"] == "SHADOW"
+
+    await registry.promote("m-live-1", mode="FULL", canary_percent=100, actor="test")
+    assert not await ml_jobs.shadow_if_idle("m-auto-2")
+    assert (await registry.deployment())["model_version"] == "m-live-1"
+
+
+async def test_auto_retrain_exports_live_feedback_once_past_the_threshold(
+        replayed, monkeypatch, tmp_path):
+    from rec.api import auto_retrain
+
+    queued = []
+
+    async def fake_job(dataset_id, params):
+        queued.append((dataset_id, params))
+        return "job-auto"
+
+    monkeypatch.setattr(auto_retrain.ml_jobs, "create_training_job", fake_job)
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    await store.r.delete(auto_retrain.LOCK_KEY)
+    conn = await pg.pool()
+    now = datetime.now(UTC)
+    ids = [f"imp-auto-{n}" for n in range(3)]
+    await conn.executemany(
+        """INSERT INTO impressions (impression_id, request_id, customer_id, merchant_id,
+             position, occurred_at) VALUES ($1, 'req-auto', 'C-auto', 'M-auto', $2, $3)""",
+        [(impression_id, n, now - timedelta(days=2)) for n, impression_id in enumerate(ids)])
+    try:
+        monkeypatch.setattr(settings, "auto_retrain_min_new_impressions", 10**9)
+        assert await auto_retrain.check(store, now=now) is None
+
+        monkeypatch.setattr(settings, "auto_retrain_min_new_impressions", 3)
+        assert await auto_retrain.check(store, now=now) == "job-auto"
+        dataset_id, params = queued[0]
+        assert params == {"trigger": "auto"}
+        manifest = json.loads((tmp_path / dataset_id / "manifest.json").read_text())
+        assert manifest["source"] == "live-postgres"
+        assert manifest["rowCounts"]["feedbackEvents"] >= 3
+
+        assert await auto_retrain.check(store, now=now) is None  # one run per interval
+    finally:
+        await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)", ids)
+        await store.r.delete(auto_retrain.LOCK_KEY)
+
+
 async def test_training_job_endpoint_guards_role_and_dataset(client, replayed):
     assert (await client.post("/admin/v1/training-jobs",
                               json={"datasetId": "test-dataset"},

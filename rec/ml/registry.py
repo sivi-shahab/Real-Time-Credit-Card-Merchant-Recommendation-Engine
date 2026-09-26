@@ -84,14 +84,18 @@ async def promote(model_version: str, *, mode: str, canary_percent: int, actor: 
         raise PromotionRefused("canary mode needs canaryPercent between 1 and 100")
 
     current = await deployment()
+    # Rollback restores previous_version as FULL, so it may only ever hold a model that
+    # was serving customers. A SHADOW model never was: recording it would let a rollback
+    # put an unreviewed shadow candidate on full traffic.
+    was_serving = current["mode"] in ("CANARY", "FULL") \
+        and current["model_version"] != model_version
     conn = await pg.pool()
     row = await conn.fetchrow(
         """UPDATE model_deployment SET mode=$1, model_version=$2, previous_version=$3,
              canary_percent=$4, promoted_by=$5, promoted_at=now(), note=$6
            WHERE id=1 RETURNING *""",
         mode, model_version,
-        current["model_version"] if current["model_version"] != model_version
-        else current["previous_version"],
+        current["model_version"] if was_serving else current["previous_version"],
         canary_percent if mode == "CANARY" else (100 if mode == "FULL" else 0),
         actor, note)
     return dict(row)

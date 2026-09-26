@@ -3,14 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 
 from rec.api.jobs import publish
+from rec.ml import client as ranking_client
 from rec.ml import registry
 from rec.ml.train import train
 from rec.settings import settings
 from rec.store import pg
+
+log = logging.getLogger("ml_jobs")
+AUTO_ACTOR = "system:auto-retrain"
 
 
 async def create_training_job(dataset_id: str, params: dict | None = None,
@@ -60,12 +65,33 @@ async def _run(job_id: str, dataset_id: str, params: dict) -> None:
         await publish({"type": "training.status", "jobId": job_id, "status": "COMPLETED",
                        "modelVersion": payload["modelVersion"],
                        "approved": payload["approved"]})
+        if params.get("trigger") == "auto" and payload["approved"]:
+            await shadow_if_idle(payload["modelVersion"])
     except Exception as exc:
         await conn.execute(
             "UPDATE training_jobs SET status='FAILED', error=$2, updated_at=now() "
             "WHERE job_id=$1", job_id, str(exc)[:1000])
         await publish({"type": "training.status", "jobId": job_id, "status": "FAILED",
                        "error": str(exc)[:200]})
+
+
+async def shadow_if_idle(model_version: str) -> bool:
+    """Continuous learning: an approved auto-trained model goes to SHADOW, which no
+    customer sees, and only while no model is serving. Replacing a CANARY/FULL model, and
+    every step past SHADOW, stays an Approver's decision (ADR-0005, SEC-001)."""
+    try:
+        if (await registry.deployment())["mode"] not in ("BASELINE", "SHADOW"):
+            return False
+        await ranking_client.warm(model_version)
+        await registry.promote(model_version, mode="SHADOW", canary_percent=0,
+                               actor=AUTO_ACTOR, note="auto-retrain")
+    except Exception:  # noqa: BLE001 - the job already COMPLETED; shadowing is best effort
+        log.exception("auto-shadow of %s skipped", model_version)
+        return False
+    await pg.audit(AUTO_ACTOR, "System", "model.promote", f"model/{model_version}",
+                   outcome="AUTOMATIC", changes={"mode": "SHADOW"})
+    await publish({"type": "model.shadowed", "modelVersion": model_version})
+    return True
 
 
 async def list_jobs(limit: int = 25) -> list[dict]:

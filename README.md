@@ -239,6 +239,12 @@ top-10 cut keeps the whole slate: `recall@10` is trivially 1.0 and coverage/dive
 are identical for every ranker. The training metadata carries this caveat explicitly
 (`lineage.metricCaveat`) and the dashboard renders it.
 
+**Continuous learning** ([ADR-0007](docs/adr/0007-continuous-learning.md)). Set
+`AUTO_RETRAIN_INTERVAL_HOURS` (off by default) and the API retrains on live feedback from
+Postgres once `AUTO_RETRAIN_MIN_NEW_IMPRESSIONS` new impressions are observable, through
+the same gates. An approved result goes to SHADOW only while no model serves; CANARY and
+FULL remain an Approver's call. An online bandit in SHADOW is the planned second stage.
+
 ## Not built
 
 - **Production platform controls.** TLS on every hop, Kafka SASL/ACLs, Redis AUTH,

@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
-from rec.api import bff, jobs, ml_jobs, service
+from rec.api import auto_retrain, bff, jobs, ml_jobs, service
 from rec.api.auth import Principal, customer_self, principal, require
 from rec.core.models import (
     FEATURE_SCHEMA_VERSION,
@@ -29,6 +29,7 @@ from rec.ml import client as ranking_client
 from rec.ml import guardrail, registry
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, setup_logging, trace_id_var
+from rec.settings import settings
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
@@ -40,9 +41,12 @@ store = OnlineStore()
 async def lifespan(app: FastAPI):
     setup_logging()
     await pg.pool()
-    watcher = asyncio.create_task(guardrail.loop(store))
+    watchers = [asyncio.create_task(guardrail.loop(store))]
+    if settings.auto_retrain_interval_hours > 0:
+        watchers.append(asyncio.create_task(auto_retrain.loop(store)))
     yield
-    watcher.cancel()
+    for watcher in watchers:
+        watcher.cancel()
     await ranking_client.close()
     await store.close()
     await pg.close()

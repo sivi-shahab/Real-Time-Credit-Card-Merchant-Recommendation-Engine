@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     guardrail_max_degraded_rate: float = 0.05
     guardrail_max_p95_ms: float = 500.0
 
+    # Continuous learning, stage 1: retrain on live feedback. 0 disables the loop.
+    auto_retrain_interval_hours: float = 0.0
+    auto_retrain_min_new_impressions: int = 500
+
 
 DEV_ENVIRONMENTS = {"local", "test", "ci"}
 

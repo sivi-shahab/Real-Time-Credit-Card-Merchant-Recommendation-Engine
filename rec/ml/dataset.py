@@ -265,7 +265,9 @@ def _promotion(row: dict) -> Promotion:
     return Promotion(
         promotionId=row["promotionId"], merchantId=row["merchantId"],
         benefitType=row["benefitType"], benefitValue=float(row["benefitValue"]),
-        minSpendMinor=int(row["minSpendMinor"]), maxBenefitMinor=int(row["maxBenefitMinor"]),
+        minSpendMinor=int(row["minSpendMinor"]),
+        # uncapped promos exist in Postgres (nullable column); generator files always cap
+        maxBenefitMinor=None if row["maxBenefitMinor"] is None else int(row["maxBenefitMinor"]),
         eligibleCardTiers=[CardTier(t) for t in str(row["eligibleCardTiers"]).split("|") if t],
         eligibleCityCodes=[c for c in str(row["eligibleCityCodes"]).split("|") if c],
         startsAt=_ts(row["startsAt"]), endsAt=_ts(row["endsAt"]),
