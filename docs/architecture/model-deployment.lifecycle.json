@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Model Deployment Lifecycle",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "viewBox": [
+      980,
+      566
+    ],
+    "views": [
+      {
+        "id": "rollout",
+        "label": "Rollout rail",
+        "focus": [
+          "baseline",
+          "gate",
+          "shadow",
+          "canary",
+          "full"
+        ],
+        "note": "An Approver promotes a gated model; blast radius grows from shadow to full."
+      },
+      {
+        "id": "refusal",
+        "label": "Refused promotion",
+        "focus": [
+          "gate",
+          "refused",
+          "baseline"
+        ],
+        "note": "Failed gates, schema mismatch or a model the ranker cannot load leave the mode unchanged."
+      },
+      {
+        "id": "rollback",
+        "label": "Rollback",
+        "focus": [
+          "canary",
+          "full",
+          "breach",
+          "rollback",
+          "baseline"
+        ],
+        "note": "A guardrail breach or an operator rolls back to the previous model, else baseline."
+      }
+    ],
+    "legend": {
+      "entries": {
+        "start": {
+          "label": "initial mode"
+        },
+        "success": {
+          "label": "full rollout"
+        },
+        "waiting": {
+          "label": "observe only"
+        },
+        "decision": {
+          "label": "promote check"
+        },
+        "active": {
+          "label": "serving / acting"
+        },
+        "failure": {
+          "label": "failure / exit"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Deployment mode"
+    },
+    {
+      "id": "exits",
+      "label": "Refusal + rollback"
+    }
+  ],
+  "states": [
+    {
+      "id": "baseline",
+      "type": "start",
+      "label": "BASELINE",
+      "sublabel": "rule-based ranker",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "no model"
+    },
+    {
+      "id": "gate",
+      "type": "decision",
+      "label": "Promote check",
+      "sublabel": "gates, schema, warm",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "Approver"
+    },
+    {
+      "id": "shadow",
+      "type": "waiting",
+      "label": "SHADOW",
+      "sublabel": "model scored, not served",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "0% traffic"
+    },
+    {
+      "id": "canary",
+      "type": "active",
+      "label": "CANARY",
+      "sublabel": "n% by customer hash",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "guarded"
+    },
+    {
+      "id": "full",
+      "type": "success",
+      "label": "FULL",
+      "sublabel": "model serves all",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "guarded"
+    },
+    {
+      "id": "refused",
+      "type": "failure",
+      "label": "Refused",
+      "sublabel": "409 / 503, mode unchanged",
+      "lane": "exits",
+      "col": 0,
+      "tag": "audited"
+    },
+    {
+      "id": "rollback",
+      "type": "active",
+      "label": "Rollback",
+      "sublabel": "manual or automatic",
+      "lane": "exits",
+      "col": 1,
+      "tag": "cache flushed",
+      "width": 108
+    },
+    {
+      "id": "breach",
+      "type": "failure",
+      "label": "Breach",
+      "sublabel": "degraded rate or p95",
+      "lane": "exits",
+      "col": 2,
+      "tag": "automatic",
+      "width": 108
+    }
+  ],
+  "transitions": [
+    {
+      "from": "gate",
+      "to": "refused",
+      "label": "check failed",
+      "variant": "security"
+    },
+    {
+      "from": "full",
+      "to": "breach",
+      "label": "breach",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "from": "breach",
+      "to": "rollback",
+      "variant": "security",
+      "route": "straight"
+    },
+    {
+      "from": "rollback",
+      "to": "baseline",
+      "label": "no previous",
+      "variant": "emphasis",
+      "route": "bottom-channel",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "from": "rollback",
+      "to": "full",
+      "label": "previous",
+      "variant": "emphasis"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Promotion",
+      "items": [
+        "Any mode can be targeted directly; the rail is the safe order",
+        "Every promote flushes cached recommendations (SERV-004)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Guarded modes",
+      "items": [
+        "CANARY and FULL record per-request stats in Redis",
+        "SHADOW never affects what the customer sees"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Rollback",
+      "items": [
+        "Operators can roll back manually at any time",
+        "With a previous model, rollback returns it to FULL"
+      ]
+    }
+  ]
+}
