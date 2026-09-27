@@ -126,12 +126,13 @@ def features(raw: pd.DataFrame) -> pd.DataFrame:
 def fit(frame: pd.DataFrame, *, seed: int = 42, test_share: float = 0.3,
         min_effect: float = 0.01) -> dict:
     """X-learner CATE, graded by Qini on customers it was not fitted on."""
+    # Data first: with too few customers there is nothing to fit, whether or not the
+    # optional `[causal]` extra is installed.
+    if frame.empty or frame["treatment"].nunique() < 2 or len(frame) < 200:
+        raise ValueError("need both arms and at least 200 customers with a closed window")
     from causalml.inference.meta import BaseXClassifier
     from causalml.metrics import qini_score
     from xgboost import XGBClassifier, XGBRegressor
-
-    if frame.empty or frame["treatment"].nunique() < 2 or len(frame) < 200:
-        raise ValueError("need both arms and at least 200 customers with a closed window")
     rng = np.random.default_rng(seed)
     held_out = rng.random(len(frame)) < test_share
     train, test = frame[~held_out], frame[held_out]
