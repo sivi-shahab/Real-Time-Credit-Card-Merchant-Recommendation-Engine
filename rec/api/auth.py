@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass
@@ -19,9 +20,12 @@ from dataclasses import dataclass
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 
+from rec.obs import RATE_LIMITED
 from rec.settings import DEV_ENVIRONMENTS, settings
 from rec.store import pg
 from rec.store.redis_store import _client
+
+log = logging.getLogger("auth")
 
 SESSION_PREFIX = "sess:"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -207,6 +211,36 @@ def require(action: str):
         return p
 
     guard.action = action  # read by the RBAC matrix test
+    return guard
+
+
+def rate_limited(bucket: str):
+    """D-1: at most `rate_limit_<bucket>_per_minute` requests per customer, counted in
+    Redis so every worker and replica shares the count. Staff are not limited here.
+    Fails open: losing Redis must not take serving down with it (SERV-003)."""
+    # ponytail: fixed one-minute windows allow up to twice the limit across a boundary;
+    # a sliding window if that burst ever matters
+    async def guard(p: Principal = Depends(principal)) -> Principal:
+        limit = getattr(settings, f"rate_limit_{bucket}_per_minute")
+        if p.kind != "customer" or limit <= 0:
+            return p
+        now = int(time.time())
+        key = f"rl:{bucket}:{p.subject}:{now // 60}"
+        try:
+            async with redis().pipeline(transaction=False) as pipe:
+                pipe.incr(key)
+                pipe.expire(key, 120)
+                count = (await pipe.execute())[0]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("rate limit not applied, Redis unavailable: %s", type(exc).__name__)
+            return p
+        if count > limit:
+            RATE_LIMITED.labels(bucket).inc()
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                                f"more than {limit} {bucket} requests a minute",
+                                headers={"Retry-After": str(60 - now % 60)})
+        return p
+
     return guard
 
 

@@ -12,6 +12,9 @@ os.environ.setdefault(
     "ops-token:ops:Marketing Operator,auditor-token:auditor:Auditor,"
     "ml-token:mlops:ML Engineer,approver-token:approver:Approver,viewer-token:viewer:Viewer")
 os.environ.setdefault("COOKIE_SECURE", "false")
+# Many tests call the customer API for the same customer; the D-1 test lowers these itself.
+os.environ.setdefault("RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE", "1000000")
+os.environ.setdefault("RATE_LIMIT_FEEDBACK_PER_MINUTE", "1000000")
 
 
 def _ensure_database(dsn: str) -> None:

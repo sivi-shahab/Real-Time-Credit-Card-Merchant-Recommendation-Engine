@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     customer_jwt_issuer: str = ""
     customer_jwt_audience: str = ""
     customer_id_claim: str = "sub"  # the claim that holds our customerId
+    # D-1: requests per customer per minute, across all API workers. 0 = unlimited.
+    rate_limit_recommendations_per_minute: int = 60
+    rate_limit_feedback_per_minute: int = 120
 
     # Canary guardrail (SDD 17.2 step 14): automatic rollback when the live model misbehaves.
     guardrail_interval_seconds: int = 30

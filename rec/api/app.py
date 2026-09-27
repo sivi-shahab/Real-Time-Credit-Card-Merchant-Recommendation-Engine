@@ -20,7 +20,7 @@ from prometheus_client.multiprocess import MultiProcessCollector
 from pydantic import BaseModel, Field
 
 from rec.api import bff, jobs, learning_settings, ml_jobs, service
-from rec.api.auth import Principal, customer_self, principal, require
+from rec.api.auth import Principal, customer_self, principal, rate_limited, require
 from rec.core.models import (
     FEATURE_SCHEMA_VERSION,
     RANKING_CONFIG_VERSION,
@@ -136,7 +136,8 @@ def _code(status_code: int) -> str:
 
 
 @app.get("/api/v1/customer/{customer_id}/recommendations", tags=["customer"],
-         response_model=RecommendationResponse)
+         response_model=RecommendationResponse,
+         dependencies=[Depends(rate_limited("recommendations"))])
 async def get_recommendations(
     customer_id: str,
     p: Annotated[Principal, Depends(customer_self)],
@@ -184,7 +185,8 @@ def _own_feedback(p: Principal, customer_id: str) -> None:
                             "feedback is accepted only from the customer it describes")
 
 
-@app.post("/api/v1/feedback/impressions", status_code=202, tags=["feedback"])
+@app.post("/api/v1/feedback/impressions", status_code=202, tags=["feedback"],
+          dependencies=[Depends(rate_limited("feedback"))])
 async def record_impressions(batch: ImpressionBatch,
                              p: Annotated[Principal, Depends(principal)]):
     _own_feedback(p, batch.customerId)
@@ -220,7 +222,8 @@ class Interaction(BaseModel):
     interactionType: str = Field(pattern="^(CLICK|PROMO_ACTIVATION|REDEMPTION)$")
 
 
-@app.post("/api/v1/feedback/interactions", status_code=202, tags=["feedback"])
+@app.post("/api/v1/feedback/interactions", status_code=202, tags=["feedback"],
+          dependencies=[Depends(rate_limited("feedback"))])
 async def record_interaction(body: Interaction, p: Annotated[Principal, Depends(principal)]):
     _own_feedback(p, body.customerId)
     conn = await pg.pool()

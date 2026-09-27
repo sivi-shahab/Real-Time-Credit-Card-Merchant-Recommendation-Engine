@@ -70,6 +70,8 @@ RANKING_DEGRADED = Counter("ranking_degraded_total", "Model failures served as b
                            ["reason"])
 EVENTS = Counter("stream_events_total", "Events handled by the feature engine", ["outcome"])
 GUARDRAIL_ROLLBACKS = Counter("guardrail_rollbacks_total", "Automatic model rollbacks")
+RATE_LIMITED = Counter("rate_limited_total", "Customer requests refused with 429 (D-1)",
+                       ["bucket"])
 INFERENCE_LATENCY = Histogram("ranking_inference_seconds", "Model predict time",
                               ["model_version"],
                               buckets=(.001, .0025, .005, .01, .025, .05, .1, .25, .5))

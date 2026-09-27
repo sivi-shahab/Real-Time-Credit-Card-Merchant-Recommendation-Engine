@@ -25,6 +25,12 @@ Recommendation p95 > 200 ms for 10 min.
    stream and worker pools under Postgres `max_connections`. With more than one worker,
    `PROMETHEUS_MULTIPROC_DIR` must be set or `/metrics` shows one worker's counts.
 
+## rate-limits
+`rate_limited_total{bucket}` counts customer requests refused with 429 (D-1). A steady
+rise for many customers usually means an app retry loop: check the app release before
+raising `RATE_LIMIT_*_PER_MINUTE`. Limits are per customer across all workers (Redis); if
+Redis is down they are not applied, and serving continues.
+
 ## fallback-rate
 More than 5% of responses are `FALLBACK`.
 - `ranking_degraded_total{reason}` rising → ranking service problem; the guardrail should

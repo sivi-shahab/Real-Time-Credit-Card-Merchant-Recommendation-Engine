@@ -44,7 +44,7 @@ fraud detection.
 | S-2 | Forged customer identity: `cust-<id>` is guessable | B1 | The mobile channel's OIDC access token is verified against the customer IdP's JWKS: RS256/ES256 only, issuer, audience, expiry, not-before; the customerId comes from one configured claim and `customer_self` limits the token to it (ADR-0013). Unconfigured = refused; `cust-<id>` only in dev. Residual: the mobile platform has to confirm the token profile; revocation waits for `exp` | `test_only_a_valid_token_from_the_customer_idp_signs_a_customer_in`, `test_static_tokens_are_dead_outside_dev` | Mitigated (pending IdP configuration) |
 | S-3 | Anyone who can reach Kafka publishes fake transactions | B3 | Schema + reference validation and quarantine limit the damage, but they do not authenticate the producer. Needs SASL/mTLS and per-topic ACLs (produce on `cc.transactions` = ingestion only) | `test_pipeline_applies_and_quarantines_per_spec` | Open |
 | S-4 | Substituted or replayed id_token at login | B2 | Single-use state (10 min), nonce; the id_token's signature is verified against the IdP's JWKS (RS256/ES256), then issuer, audience and expiry (ADR-0006). Checked end to end against the local Keycloak | `test_oidc_rejects_wrong_nonce_audience_signature_or_role_set`, `test_oidc_code_flow_creates_a_session` | Mitigated |
-| S-5 | A genuine customer fabricates feedback: impressions with any `requestId`, merchant or position, and clicks on them | B1 | Every served response is recorded per customer (Redis, 24 h). An impression must name a response this customer received, a merchant in it and the position it held; the served model version is stored, not the client's; items are typed, at most 20. A click must name this customer's own impression of that merchant. Unverifiable feedback (Redis down) is refused. Residual: clicks on items that really were shown cannot be proven real, and there is no per-customer rate limit (D-1) | `test_feedback_must_match_a_slate_that_was_served`, `test_feedback_is_accepted_only_from_the_customer_it_describes` | Partial |
+| S-5 | A genuine customer fabricates feedback: impressions with any `requestId`, merchant or position, and clicks on them | B1 | Every served response is recorded per customer (Redis, 24 h). An impression must name a response this customer received, a merchant in it and the position it held; the served model version is stored, not the client's; items are typed, at most 20. A click must name this customer's own impression of that merchant. Unverifiable feedback (Redis down) is refused. Residual: clicks on items that really were shown cannot be proven real, and a customer can still make up to 120 feedback calls a minute (D-1) | `test_feedback_must_match_a_slate_that_was_served`, `test_feedback_is_accepted_only_from_the_customer_it_describes` | Partial |
 
 ## Tampering
 
@@ -86,7 +86,7 @@ fraud detection.
 
 | ID | Threat | Boundary | Control | Evidence | Status |
 |---|---|---|---|---|---|
-| D-1 | Flooding the customer API | B1 | Cache in front of recomputation; no rate limiting in the app (`429` is defined but unused) — belongs at the API gateway | — | Open |
+| D-1 | Flooding the customer API | B1 | Cache in front of recomputation; per-customer limits on recommendations (60/min) and feedback (120/min), counted in Redis across all workers, `429` with `Retry-After`; fails open if Redis is down. An edge/gateway limit per IP is still needed for unauthenticated floods | `test_each_customer_is_rate_limited_on_its_own` | Mitigated (edge limit pending) |
 | D-2 | Oversized requests | B1, B5 | `limit ≤ 20`, ≤ 200 candidates, score batch ≤ 500, list pages ≤ 200 | `test_errors_are_uniform_and_requests_are_bounded` | Mitigated |
 | D-3 | Slow or failing ranking takes serving down | B5 | 400 ms client timeout, fallback to baseline, guardrail auto-rollback | `test_ac004_fallback_when_ranking_dependency_fails`, `test_guardrail_rolls_back_a_failing_live_model`, live drill | Mitigated |
 | D-4 | Poison event stalls the consumer | B3 | Per-event isolation, quarantine + DLQ, consumer keeps going | `test_pipeline_applies_and_quarantines_per_spec`, `scripts/chaos.sh` | Mitigated |
@@ -112,8 +112,7 @@ fraud detection.
 1. **S-3 / I-6 / T-6 / I-5** — no transport security or service authentication on
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
 2. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
-   report clicks they never made and nothing rate-limits them; retained training exports
+   report clicks they never made (at most 120 feedback calls a minute); retained training exports
    keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
-3. **D-1** — no rate limiting at the edge.
-4. **E-4 / T-1** — the app's database role can undo the audit protection.
+3. **E-4 / T-1** — the app's database role can undo the audit protection.

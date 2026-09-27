@@ -129,6 +129,8 @@ python scripts/loadtest.py api --concurrency 8 --seconds 30   # latency/throughp
 ```
 `loadtest.py api` is one Python process and tops out near 150 rps; above 8 clients use
 `ab`/k6 or the generator becomes what you measure.
+Customer calls are limited to 60 a minute per customer (D-1); load tests need
+`RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE=0` on the API.
 The scripts call `python3`; run them with the venv active (or `.venv/bin` on `PATH`).
 
 `smoke_e2e.sh` fails loudly if online aggregates diverge from an offline recomputation

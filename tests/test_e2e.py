@@ -1519,3 +1519,37 @@ async def test_simulator_commands_reach_a_replay_on_another_worker(client, datas
     replay = (dataset[0] / "replay.jsonl").read_text().splitlines()
     assert [v.decode().rstrip("\n") for v in sent] == replay, "every event once, in order"
     assert live["max"] == 1
+
+
+async def test_each_customer_is_rate_limited_on_its_own(client, replayed, monkeypatch):
+    """D-1: per customer, shared by every worker (Redis); staff are not limited here, and
+    losing Redis does not take serving down."""
+    from rec.api import auth
+
+    monkeypatch.setattr(settings, "rate_limit_recommendations_per_minute", 3)
+    conn = await pg.pool()
+    a, b = [r["customer_id"] for r in await conn.fetch(
+        "SELECT customer_id FROM customers ORDER BY customer_id DESC LIMIT 2")]
+    await auth.redis().delete(*[k async for k in auth.redis().scan_iter("rl:*")] or ["-"])
+
+    def get(cid, headers=None):
+        return client.get(f"/api/v1/customer/{cid}/recommendations",
+                          headers=headers or {"Authorization": f"Bearer cust-{cid}"})
+
+    codes = [(await get(a)).status_code for _ in range(4)]
+    if codes[:3] != [200] * 3:  # a minute boundary reset the window mid-way; once more
+        await auth.redis().delete(*[k async for k in auth.redis().scan_iter("rl:*")] or ["-"])
+        codes = [(await get(a)).status_code for _ in range(4)]
+    assert codes == [200, 200, 200, 429]
+    refused = await get(a)
+    assert refused.json()["code"] == "RATE_LIMITED"
+    assert 0 < int(refused.headers["retry-after"]) <= 60
+    assert (await get(b)).status_code == 200, "another customer has its own budget"
+    assert (await get(a, ANALYST)).status_code == 200, "staff are not customer-limited"
+
+    class Down:
+        def pipeline(self, **_kw):
+            raise ConnectionError("redis down")
+
+    monkeypatch.setattr(auth, "redis", lambda: Down())
+    assert (await get(a)).status_code == 200, "fails open"
