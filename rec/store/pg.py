@@ -22,12 +22,21 @@ class _Connection(asyncpg.Connection):
         return ""
 
 
+def _pooler_options() -> dict:
+    """Behind PgBouncer in transaction pooling without prepared-statement support
+    (before 1.21, or max_prepared_statements=0), set PG_STATEMENT_CACHE_SIZE=0: asyncpg
+    then prepares every query unnamed, so no statement outlives the transaction that
+    used its server connection. PgBouncer 1.21+ with prepared statements on needs no
+    change. Nothing here calls Connection.prepare(), which would name one."""
+    return {"statement_cache_size": settings.pg_statement_cache_size}
+
+
 async def pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(settings.postgres_dsn, min_size=2,
-                                         max_size=settings.pg_max_connections,
-                                         connection_class=_Connection)
+        _pool = await asyncpg.create_pool(
+            settings.postgres_dsn, min_size=2, max_size=settings.pg_max_connections,
+            connection_class=_Connection, **_pooler_options())
         if settings.db_auto_migrate:
             await _migrate(_pool)
     return _pool

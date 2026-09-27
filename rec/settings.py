@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Apply db/schema.sql at startup (dev: the app role owns the schema). Production sets
     # false and runs `python -m rec.store.pg` as the owner before deploying (E-4).
     db_auto_migrate: bool = True
+    # ADR-0014: 0 behind PgBouncer in transaction pooling without prepared-statement
+    # support (rec.store.pg._pooler_options). The migration job connects to Postgres
+    # directly (it holds a session advisory lock).
+    pg_statement_cache_size: int = 100
     # Local only: lets the migration job create the `rec_app` login role with this
     # password. Production provisions that role itself and leaves this empty.
     app_db_password: str = ""

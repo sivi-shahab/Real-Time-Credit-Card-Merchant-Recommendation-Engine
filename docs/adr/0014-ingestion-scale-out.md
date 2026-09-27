@@ -1,7 +1,8 @@
 # ADR-0014 — Scaling ingestion out to 10 000 / 20 000 events per second
 
-**Status:** Accepted · 2026-09-27. Decisions 3, 4 and 6 are built; 1, 2 and 5 are
-platform sizing, to be confirmed on representative hardware with
+**Status:** Accepted · 2026-09-27. Decisions 3, 4 and 6 are built, and the tooling for 1
+(`scripts/create_topics.py`) and 5 (`PG_STATEMENT_CACHE_SIZE`); the sizing in 1, 2 and 5
+is the platform's, to be confirmed on representative hardware with
 `scripts/loadtest.py kafka`.
 
 ## Context
@@ -39,6 +40,9 @@ slower than the one before; the tool spreads copies over distinct customers.)
    added but never removed, and adding them moves customers between partitions). 96 divides
    by 1, 2, 3, 4, 6, 8, 12, 16, 24, 32 and 48, so consumers can be scaled in even steps,
    and covers the 20 000/s burst at ~210/s per consumer. Keyed by `customerId`, unchanged.
+   `scripts/create_topics.py` creates all three produced topics this way (replication 3,
+   `min.insync.replicas` 2, `customer.features` compacted, DLQ kept 30 days) and only
+   reports an existing topic that differs.
 2. **One consumer process per partition at peak**, fewer off-peak: the group rebalances;
    handling is idempotent, so a rebalance costs time, not correctness. Size steady state at
    ~50 consumers, burst at 96. Autoscale on consumer lag (`kafka_consumergroup_lag`), not CPU.
@@ -59,8 +63,11 @@ slower than the one before; the tool spreads copies over distinct customers.)
    consumer, not per event. `REDIS_CLUSTER=true` selects the cluster client. Start at 6
    primaries (with 3) and resize with the measurement.
 5. **Postgres through PgBouncer** (transaction pooling): 96 consumers x 4 connections plus
-   the API exceed `max_connections`. asyncpg then needs `statement_cache_size=0`. The
-   batched `transaction_log` insert (one transaction per consumer batch) stays.
+   the API exceed `max_connections`. PgBouncer 1.21+ with prepared statements on (the
+   default since 1.22) needs no change; older, or with them off, set
+   `PG_STATEMENT_CACHE_SIZE=0` (checked both ways against PgBouncer 1.25 in transaction
+   mode: the E2E suite fails without it there and passes with it). The migration job
+   connects to Postgres directly. The batched `transaction_log` insert stays.
 6. **Feature-update messages coalesced per batch**: one `customer.features` message per
    customer per consumer batch (its latest version) instead of one per event. Consumers of
    that topic only need the latest version; at 10 000/s it halves broker writes.

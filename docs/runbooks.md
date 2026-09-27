@@ -86,6 +86,21 @@ on the volume no longer matches the SHA-256 recorded at training (T-4). Treat it
 security incident: do not re-promote, keep the file for investigation, retrain.
 `ARTIFACT_DIGEST_MISSING`: the model was trained before digests were recorded; retrain it.
 
+## kafka-topics
+Before go-live, and on any new cluster:
+`python scripts/create_topics.py --bootstrap <brokers> --partitions 96 --replication-factor 3`
+(ADR-0014). It creates what is missing and never alters an existing topic: it prints how
+one differs and exits 1. Adding partitions to `cc.transactions` moves customers between
+partitions, so do it only as a planned change with the stream drained. `--dry-run` shows
+the plan.
+
+## pgbouncer
+Put PgBouncer (transaction pooling) between the consumers/API and Postgres once their pools
+add up past `max_connections` (ADR-0014). PgBouncer 1.21+ with `max_prepared_statements`
+above 0 needs nothing else; otherwise set `PG_STATEMENT_CACHE_SIZE=0`, or queries fail
+with "prepared statement ... does not exist". Run the migration job against Postgres
+directly: it holds a session-level advisory lock.
+
 ## stream-scaling
 Consumers scale by partition within the `STREAM_GROUP_ID` group (ADR-0014): add consumer
 processes up to the partition count; each takes a share of partitions on rebalance, and a

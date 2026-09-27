@@ -175,7 +175,8 @@ dashboard/         Vue 3 + TS console (10 views)
 contracts/         frozen openapi.json, asyncapi.yaml, avro/*.avsc (event contracts)
 rec/obs.py         JSON logs with trace ids + redaction, Prometheus metrics, OTel traces
 scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
-                   rebuild_state.py, loadtest.py, export_openapi.py
+                   rebuild_state.py, loadtest.py, export_openapi.py,
+                   create_topics.py (Kafka topics, ADR-0014)
 deploy/            Keycloak realm, Prometheus scrape config + alert rules
 docs/adr/          architecture decisions
 docs/architecture/ archify diagrams (system, data, ML, request, erasure flows): spec, SVG, HTML

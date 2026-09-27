@@ -25,7 +25,8 @@ def _ensure_database(dsn: str) -> None:
     base, name = dsn.rsplit("/", 1)
 
     async def create():
-        con = await asyncpg.connect(base + "/postgres")
+        # uncached: the DSN may point at PgBouncer in transaction pooling
+        con = await asyncpg.connect(base + "/postgres", statement_cache_size=0)
         try:
             if not await con.fetchval("SELECT 1 FROM pg_database WHERE datname=$1", name):
                 await con.execute(f'CREATE DATABASE "{name}"')
