@@ -27,7 +27,8 @@ async def pool() -> asyncpg.Pool:
         _pool = await asyncpg.create_pool(settings.postgres_dsn, min_size=2,
                                          max_size=settings.pg_max_connections,
                                          connection_class=_Connection)
-        await _migrate(_pool)
+        if settings.db_auto_migrate:
+            await _migrate(_pool)
     return _pool
 
 
@@ -206,3 +207,22 @@ async def audit(actor: str, actor_role: str, action: str, resource: str,
         actor, actor_role, action, resource, outcome,
         json.dumps(changes, default=str) if changes else None, trace_id,
     )
+
+
+if __name__ == "__main__":  # the owner's migration job (E-4): POSTGRES_DSN is the owner's
+    import asyncio
+
+    async def _main() -> None:
+        p = await asyncpg.create_pool(settings.postgres_dsn, min_size=1, max_size=1)
+        try:
+            if settings.app_db_password:
+                async with p.acquire() as con:
+                    verb = "ALTER" if await con.fetchval(
+                        "SELECT 1 FROM pg_roles WHERE rolname = 'rec_app'") else "CREATE"
+                    password = settings.app_db_password.replace("'", "''")
+                    await con.execute(f"{verb} ROLE rec_app LOGIN PASSWORD '{password}'")
+            await _migrate(p)
+        finally:
+            await p.close()
+
+    asyncio.run(_main())

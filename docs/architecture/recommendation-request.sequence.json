@@ -65,7 +65,7 @@
       "id": "client",
       "type": "frontend",
       "label": "Customer App",
-      "sublabel": "cust-<id> token"
+      "sublabel": "OIDC access token"
     },
     {
       "id": "api",

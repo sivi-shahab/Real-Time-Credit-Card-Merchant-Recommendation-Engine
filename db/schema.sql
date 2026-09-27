@@ -298,3 +298,17 @@ ALTER TABLE learning_setting_requests
   DROP CONSTRAINT IF EXISTS learning_setting_requests_status_check;
 ALTER TABLE learning_setting_requests ADD CONSTRAINT learning_setting_requests_status_check
   CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'));
+
+-- ===== E-4: the application connects as `rec_app`, never as the owner =====
+-- Provisioning creates the role (LOGIN, its own password); this grants it data access
+-- only, re-applied on every migration so new tables are covered. Without ownership it
+-- cannot drop the audit trigger or alter anything, and audit rows are insert-only.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rec_app') THEN
+    GRANT USAGE ON SCHEMA public TO rec_app;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO rec_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO rec_app;
+    REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM rec_app;
+  END IF;
+END $$;

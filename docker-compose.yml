@@ -3,7 +3,10 @@ name: rec-engine
 x-backend-env: &backend_env
   KAFKA_BOOTSTRAP: kafka:9092
   REDIS_URL: redis://redis:6379/0
-  POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
+  # E-4: services connect as rec_app (data access only); `migrate` applies the schema as
+  # the owner before anything starts
+  POSTGRES_DSN: postgresql://rec_app:rec-app-local@postgres:5432/rec
+  DB_AUTO_MIGRATE: "false"
   DATA_DIR: /app/data
   ENVIRONMENT: local
   MODEL_DIR: /app/data/models
@@ -68,6 +71,17 @@ services:
       interval: 5s
       retries: 20
 
+  migrate:
+    build: .
+    command: python -m rec.store.pg
+    environment:
+      <<: *backend_env
+      POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
+      APP_DB_PASSWORD: rec-app-local
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
   api:
     build: .
     # no command: the image's, uvicorn with $WEB_CONCURRENCY workers (Dockerfile)
@@ -84,6 +98,7 @@ services:
     depends_on:
       kafka: {condition: service_healthy}
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       ranking: {condition: service_started}
 
@@ -126,6 +141,7 @@ services:
     volumes: ["./data:/app/data"]
     depends_on:
       postgres: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       ranking: {condition: service_started}
 

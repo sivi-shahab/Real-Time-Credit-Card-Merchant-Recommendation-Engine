@@ -50,7 +50,7 @@ fraud detection.
 
 | ID | Threat | Boundary | Control | Evidence | Status |
 |---|---|---|---|---|---|
-| T-1 | Audit rows edited or deleted | B4 | `BEFORE UPDATE OR DELETE` trigger; app role must not own the table (else it can drop the trigger) | `test_audit_log_cannot_be_rewritten` | Partial |
+| T-1 | Audit rows edited or deleted | B4 | `BEFORE UPDATE OR DELETE` trigger, and the services' role `rec_app` has no UPDATE/DELETE/TRUNCATE on the table and does not own it, so it cannot drop the trigger either (E-4) | `test_audit_log_cannot_be_rewritten`, `test_the_app_role_has_data_access_only` | Mitigated |
 | T-2 | Cross-site request makes a signed-in operator change a promo or promote a model | B2 | Synchroniser CSRF token on every cookie-authenticated mutation; `SameSite=Lax` | `test_mutation_without_csrf_token_is_refused` | Mitigated |
 | T-3 | Crafted `modelVersion` loads a file outside the model directory | B5 | Version must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` before it becomes a path | `test_model_version_cannot_escape_the_model_directory` | Mitigated |
 | T-4 | Model artifact replaced on the shared volume after approval | B5 | Promotion requires passing gates, matching feature schema, an Approver and a successful warm. The artifact SHA-256 is recorded in Postgres at training; the API sends it with every warm and score call, and the ranking service hashes the exact bytes it parses and refuses a mismatch (HTTP 412 → baseline, reason `ARTIFACT_INTEGRITY`). A model without a recorded digest does not serve. Residual: someone who can write the `models` table can change the digest too (E-4) | `test_artifact_replaced_after_training_is_refused`, `test_training_is_reproducible_and_reports_its_gates`, `test_model_ranks_when_promoted_and_degrades_when_it_fails` | Mitigated |
@@ -102,7 +102,7 @@ fraud detection.
 | E-1 | One person trains and promotes a model | Training and promotion are different roles; an identity with two application roles is refused at login | `test_promotion_requires_approver_and_passing_gates`, `test_one_identity_one_role` | Mitigated |
 | E-2 | Operator approves their own erasure | Requester ≠ approver, enforced on the backend | `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Mitigated |
 | E-3 | A new admin route ships without a guard | RBAC matrix test fails CI for any unguarded `/admin` route | `test_every_admin_route_is_guarded` | Mitigated |
-| E-4 | Compromised app process gains DBA powers | App currently connects as the table owner. Provision a non-owner role with only DML grants | — | Open |
+| E-4 | Compromised app process gains DBA powers | Services connect as `rec_app` with data access only; the schema is applied by a separate job holding the owner's credential, which no service has | `test_the_app_role_has_data_access_only` | Mitigated |
 | E-5 | Vulnerable dependency or tampered image | bandit, pip-audit, `npm audit`, SBOM in CI. Image signing and registry scanning are not in place | CI | Partial |
 | E-7 | One person changes the learning settings alone | Separate `learning:request` and `learning:approve` roles, and the requester can never decide their own request (ADR-0011) | `test_learning_settings_change_needs_a_second_person`, `test_rbac_matrix_every_role_every_route` | Mitigated |
 | E-6 | The system actor changes the deployment without an Approver | Bounded: an approved auto-trained model may go to SHADOW, only from BASELINE or SHADOW; CANARY and FULL need an Approver. Rollback only restores a model that has served — before this, two SHADOW promotions and a rollback put a shadow-only model on full traffic | `test_auto_trained_model_reaches_shadow_only_while_nothing_serves`, `test_rollback_never_puts_a_shadow_model_on_full_traffic` | Mitigated |
@@ -115,4 +115,3 @@ fraud detection.
    report clicks they never made (at most 120 feedback calls a minute); retained training exports
    keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
-3. **E-4 / T-1** — the app's database role can undo the audit protection.

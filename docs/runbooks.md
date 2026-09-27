@@ -181,8 +181,13 @@ Kubernetes secrets, or a secret-manager CSI mount). Nothing secret is in the ima
 - **OIDC client secret:** create a second secret in the IdP, deploy it as
   `oidc_client_secret`, restart the API, then revoke the old one. Sessions survive.
 - **Postgres password:** add the new password on the role (`ALTER ROLE ... PASSWORD`),
-  deploy the new DSN, restart services, then remove the old credential. Keep the app on a
-  non-owner role in production, so it cannot drop the audit trigger.
+  deploy the new DSN, restart services, then remove the old credential. Services use
+  `rec_app`; only the migration job holds the owner's credential (see below).
+- **Schema changes (E-4):** services run with `DB_AUTO_MIGRATE=false` as `rec_app`. Before
+  a deploy, run `python -m rec.store.pg` once with the owner's `POSTGRES_DSN`: it applies
+  `db/schema.sql` and re-grants `rec_app` data access to every table. The owner's
+  credential never reaches a service. Provision `rec_app` yourself (LOGIN, own password);
+  `APP_DB_PASSWORD` is for the local stack only.
 - **Ranking service token** (`ranking_service_token`, D-5): the ranking service accepts
   exactly one value, so rotate with both down briefly or at a quiet moment: deploy the
   new value to the ranking service and the API together. A mismatch degrades serving to

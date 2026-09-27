@@ -48,7 +48,7 @@ production step remains · **OPEN** not met.
 |---|---|---|
 | Admin actions, logins, logouts, denials, rejected promotions, automatic rollbacks audited | PASS | `test_denials_are_audited`, guardrail test, BFF audit calls |
 | Audit append-only at the database | PASS | trigger; `test_audit_log_cannot_be_rewritten` |
-| App connects as a non-owner role (so it cannot drop the trigger) | OPEN | production DB provisioning |
+| App connects as a non-owner role (so it cannot drop the trigger) | PASS | services connect as `rec_app` (DML only, audit insert-only); a separate owner job migrates: `test_the_app_role_has_data_access_only`, and `smoke_e2e.sh` / `smoke_ml.sh` pass with the whole stack on `rec_app`. Production provisions the role and runs the job before each deploy |
 
 ## Performance (SDD 15)
 

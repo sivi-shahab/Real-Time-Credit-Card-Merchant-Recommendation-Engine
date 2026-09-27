@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     stream_concurrency: int = 32
     redis_max_connections: int = 64
     pg_max_connections: int = 20
+    # Apply db/schema.sql at startup (dev: the app role owns the schema). Production sets
+    # false and runs `python -m rec.store.pg` as the owner before deploying (E-4).
+    db_auto_migrate: bool = True
+    # Local only: lets the migration job create the `rec_app` login role with this
+    # password. Production provisions that role itself and leaves this empty.
+    app_db_password: str = ""
     mlflow_tracking_uri: str = "sqlite:///./data/mlflow.db"
     mlflow_experiment: str = "merchant-ranking"
     model_dir: str = "./data/models"

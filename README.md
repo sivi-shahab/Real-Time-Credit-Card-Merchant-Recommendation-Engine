@@ -91,9 +91,13 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 
 ```bash
 cp .env.example .env
-docker compose up -d --build   # kafka, postgres, redis, api, stream, ranking, worker,
-                               # mlflow, dashboard, keycloak, prometheus
+docker compose up -d --build   # kafka, postgres, redis, migrate, api, stream, ranking,
+                               # worker, mlflow, dashboard, keycloak, prometheus
 ```
+
+`migrate` applies `db/schema.sql` as the database owner and exits; every service then
+connects as `rec_app`, which can read and write data but not change the schema or the
+audit trail (threat E-4). Scripts run from the host with `.env` still use the owner.
 
 | Surface   | URL                          | Notes                                |
 |-----------|------------------------------|--------------------------------------|
@@ -290,7 +294,7 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
 ## Not built
 
 - **Production platform controls.** TLS on every hop, Kafka SASL/ACLs, Redis AUTH,
-  encryption at rest, image signing, a non-owner DB role, PITR. The local stack is
+  encryption at rest, image signing, PITR. The local stack is
   plaintext; `docs/runbooks.md` lists what production must set.
 - **Machine-to-machine admin credentials.** Scripts use static tokens, which only work in
   local/test/ci. Production automation needs OIDC client credentials.
