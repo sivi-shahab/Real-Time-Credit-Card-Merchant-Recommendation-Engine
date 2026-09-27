@@ -137,30 +137,35 @@ async def _from_session(request: Request, sid: str) -> Principal:
 
 
 # Asymmetric only: an HMAC algorithm would let the IdP's public key sign tokens.
-CUSTOMER_JWT_ALGORITHMS = ["RS256", "ES256"]
-_jwks: jwt.PyJWKClient | None = None
+JWT_ALGORITHMS = ["RS256", "ES256"]
+_jwks: dict[str, jwt.PyJWKClient] = {}
+
+
+async def verified_claims(token: str, jwks_url: str, *, issuer: str, audience: str,
+                          require: list[str]) -> dict:
+    """Claims of a JWT whose signature checks against `jwks_url` and whose issuer,
+    audience, expiry and not-before hold (30 s leeway). Raises jwt.PyJWTError."""
+    client = _jwks.get(jwks_url)
+    if client is None:  # keys are cached; an unknown kid refetches them (key rotation)
+        client = _jwks[jwks_url] = jwt.PyJWKClient(jwks_url, cache_keys=True, lifespan=3600)
+    # PyJWKClient fetches over blocking urllib when its cache misses
+    key = await asyncio.to_thread(client.get_signing_key_from_jwt, token)
+    return jwt.decode(token, key.key, algorithms=JWT_ALGORITHMS, issuer=issuer,
+                      audience=audience, leeway=30,
+                      options={"require": ["exp", "iss", "aud", *require]})
 
 
 async def _customer_from_jwt(token: str) -> str | None:
-    """The customerId a valid customer IdP token names, else None (S-2).
-
-    Signature against the IdP's published keys, then issuer, audience, expiry and
-    not-before, with 30 s of clock leeway. Unconfigured means no customer gets in.
-    """
-    global _jwks
+    """The customerId a valid customer IdP token names, else None (S-2, ADR-0013).
+    Unconfigured means no customer gets in."""
     if not (settings.customer_jwks_url and settings.customer_jwt_issuer
             and settings.customer_jwt_audience):
         return None
-    if _jwks is None:  # keys are cached; an unknown kid refetches them (key rotation)
-        _jwks = jwt.PyJWKClient(settings.customer_jwks_url, cache_keys=True, lifespan=3600)
     claim = settings.customer_id_claim
     try:
-        # PyJWKClient fetches over blocking urllib when its cache misses
-        key = await asyncio.to_thread(_jwks.get_signing_key_from_jwt, token)
-        claims = jwt.decode(token, key.key, algorithms=CUSTOMER_JWT_ALGORITHMS,
-                            issuer=settings.customer_jwt_issuer,
-                            audience=settings.customer_jwt_audience, leeway=30,
-                            options={"require": ["exp", "iss", "aud", claim]})
+        claims = await verified_claims(
+            token, settings.customer_jwks_url, issuer=settings.customer_jwt_issuer,
+            audience=settings.customer_jwt_audience, require=[claim])
     except jwt.PyJWTError:
         return None
     subject = claims.get(claim)

@@ -4,15 +4,15 @@ Needs postgres + redis from docker-compose (sessions live in Redis).
 """
 from __future__ import annotations
 
-import base64
-import json
 import logging
 import re
 import time
 
 import httpx
+import jwt
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
@@ -118,9 +118,11 @@ def test_one_identity_one_role():
 # ----------------------------------------------------------------- OIDC
 
 
-def _jwt(claims: dict) -> str:
-    enc = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()  # noqa: E731
-    return f"{enc({'alg': 'RS256'})}.{enc(claims)}.sig"
+_IDP_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def _jwt(claims: dict, key=_IDP_KEY) -> str:
+    return jwt.encode(claims, key, algorithm="RS256", headers={"kid": "idp-1"})
 
 
 @pytest.fixture
@@ -128,7 +130,7 @@ def idp(monkeypatch):
     """A fake IdP behind httpx.MockTransport; `state` lets a test tamper with it."""
     issuer = "http://idp.test/realms/rec"
     state = {"nonce": None, "roles": ["ML Engineer"], "aud": settings.oidc_client_id,
-             "verifier_seen": None}
+             "verifier_seen": None, "key": _IDP_KEY}
 
     def handle(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/token"):
@@ -136,7 +138,7 @@ def idp(monkeypatch):
             state["verifier_seen"] = form.get("code_verifier")
             return httpx.Response(200, json={"access_token": "at", "id_token": _jwt({
                 "iss": issuer, "aud": state["aud"], "sub": "u1", "nonce": state["nonce"],
-                "exp": time.time() + 60})})
+                "exp": time.time() + 60}, state["key"])})
         if req.url.path.endswith("/userinfo"):
             return httpx.Response(200, json={"preferred_username": "dina",
                                              "roles": state["roles"]})
@@ -145,10 +147,15 @@ def idp(monkeypatch):
     real = httpx.AsyncClient
     monkeypatch.setattr(bff.httpx, "AsyncClient",
                         lambda **kw: real(transport=httpx.MockTransport(handle)))
+    jwk = jwt.algorithms.RSAAlgorithm.to_jwk(_IDP_KEY.public_key(), as_dict=True)
+    monkeypatch.setattr(jwt.PyJWKClient, "fetch_data",
+                        lambda self: {"keys": [jwk | {"kid": "idp-1"}]})
+    monkeypatch.setattr(auth, "_jwks", {})
     monkeypatch.setattr(settings, "oidc_discovery_url", issuer + "/.well-known")
     monkeypatch.setattr(bff, "_discovery", {
         "issuer": issuer, "authorization_endpoint": issuer + "/auth",
-        "token_endpoint": issuer + "/token", "userinfo_endpoint": issuer + "/userinfo"})
+        "token_endpoint": issuer + "/token", "userinfo_endpoint": issuer + "/userinfo",
+        "jwks_uri": issuer + "/certs"})
     return state
 
 
@@ -173,7 +180,7 @@ async def test_oidc_code_flow_creates_a_session(client, idp):
     assert again.status_code == 400
 
 
-async def test_oidc_rejects_wrong_nonce_audience_or_role_set(client, idp):
+async def test_oidc_rejects_wrong_nonce_audience_signature_or_role_set(client, idp):
     state = await _start(client, idp)
     idp["nonce"] = "replayed"
     assert (await client.get("/bff/callback",
@@ -183,7 +190,12 @@ async def test_oidc_rejects_wrong_nonce_audience_or_role_set(client, idp):
     assert (await client.get("/bff/callback",
                              params={"code": "c", "state": state})).status_code == 401
     state = await _start(client, idp)
-    idp["aud"], idp["roles"] = settings.oidc_client_id, ["ML Engineer", "Approver"]
+    idp["aud"] = settings.oidc_client_id
+    idp["key"] = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    assert (await client.get("/bff/callback", params={"code": "c", "state": state})
+            ).status_code == 401, "an id_token not signed by the IdP (S-4)"
+    state = await _start(client, idp)
+    idp["key"], idp["roles"] = _IDP_KEY, ["ML Engineer", "Approver"]
     assert (await client.get("/bff/callback",
                              params={"code": "c", "state": state})).status_code == 403
 

@@ -18,10 +18,10 @@ requires SSO and separation of duties.
    keeps it in memory only. Bearer-authenticated requests are not CSRF-exposed and skip it.
 3. **OIDC authorization code + PKCE (S256)** against any compliant IdP; locally Keycloak
    with one demo user per role. State is single-use and expires in 10 minutes; nonce,
-   issuer, audience and expiry of the id_token are checked. The id_token signature is not
-   verified — it is received directly from the token endpoint over the back channel, which
-   OIDC Core 3.1.3.7 allows **only when that channel is TLS**. Production must run it over
-   TLS, or add JWKS verification (a JOSE dependency) if it cannot.
+   issuer, audience and expiry of the id_token are checked, and since 2026-09-27 its
+   signature too, against the IdP's `jwks_uri` (RS256/ES256; S-4). OIDC Core 3.1.3.7 would
+   allow trusting the TLS back channel instead; with PyJWT already in for customer tokens
+   (ADR-0013) verifying costs little and holds however that channel is deployed.
 4. **One identity, one application role.** An IdP user holding two application roles
    (e.g. ML Engineer + Approver) is refused at login rather than merged — merging would
    silently defeat maker-checker on promotion and erasure.

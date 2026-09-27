@@ -25,7 +25,7 @@ def idp(monkeypatch):
     key = _key()
     jwk = jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key(), as_dict=True) | {"kid": "k1"}
     monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", lambda self: {"keys": [jwk]})
-    monkeypatch.setattr(auth, "_jwks", None)
+    monkeypatch.setattr(auth, "_jwks", {})
     monkeypatch.setattr(settings, "customer_jwks_url", "https://idp.bank.example/jwks")
     monkeypatch.setattr(settings, "customer_jwt_issuer", ISSUER)
     monkeypatch.setattr(settings, "customer_jwt_audience", AUDIENCE)

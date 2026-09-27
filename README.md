@@ -325,27 +325,24 @@ most:
    cached, 145–173 ms with every request a cache miss. Simulator commands reach whichever
    worker is replaying through the run's status in Postgres, so the admin API runs the
    same workers.
-3. **id_token signature is not verified.** Safe only because it comes straight from the
-   token endpoint over the back channel, and only if that channel is TLS in production
-   (ADR-0006).
-4. **Erasure scope.** Kafka retention, dataset files on disk (filtered on read, not
+3. **Erasure scope.** Kafka retention, dataset files on disk (filtered on read, not
    rewritten), MLflow artifacts of older models and immutable audit rows are outside the
    automated erasure; a restore from a backup older than an erasure brings the customer
    back until the erasure is re-run (`docs/runbooks.md#erasure`).
-5. **Exactly-once.** At-least-once with idempotent handling, per
+4. **Exactly-once.** At-least-once with idempotent handling, per
    [ADR-0003](docs/adr/0003-at-least-once-with-idempotent-handling.md). Dedup is bounded
    by a 7-day TTL. With batched logging, a crash between the Redis write and the log flush
    re-logs those events as `DUPLICATE_EVENT`; features stay exact.
-6. **Single-node local Kafka.** `replication.factor=1`; production needs RF 3 / min-ISR 2.
-7. **Late-event policy.** Arrivals beyond 24 h are counted and applied, not routed to a
+5. **Single-node local Kafka.** `replication.factor=1`; production needs RF 3 / min-ISR 2.
+6. **Late-event policy.** Arrivals beyond 24 h are counted and applied, not routed to a
    separate correction/backfill path (FEAT-003).
-8. **Promo quota in training rows.** Historical eligibility uses current `quota_used`;
+7. **Promo quota in training rows.** Historical eligibility uses current `quota_used`;
    point-in-time quota exhaustion is not reconstructable from the master table.
-9. **Learning choices validated on synthetic data only.** The position-bias norm
+8. **Learning choices validated on synthetic data only.** The position-bias norm
    (ADR-0008), the challenger ranking (ADR-0009) and the uplift estimator (ADR-0010, on a
    planted effect; generated purchases do not respond to promos) all need re-checking on
    live logs before any of them drives a decision.
-10. **Learning loops before real feedback.** Feedback must match a response actually
+9. **Learning loops before real feedback.** Feedback must match a response actually
     served to that customer, but reported clicks on items really shown cannot be proven
     and nothing rate-limits them; retained auto-retrain exports keep an erased customer
     until they age out (threats S-5, I-9). The learning switches change only through an

@@ -3,10 +3,9 @@
 OIDC authorization code + PKCE against the corporate IdP; the BFF keeps the upstream
 tokens in the server-side session and hands the browser only an opaque HttpOnly cookie.
 
-The id_token arrives on the back channel straight from the token endpoint, so its
-issuer/audience/nonce are checked but its signature is not (OIDC Core 3.1.3.7 permits
-relying on the TLS channel here). That holds only if the back channel is TLS in
-production — see docs/runbooks.md.
+The id_token's signature is verified against the IdP's JWKS, then its issuer, audience,
+expiry and nonce (S-4). OIDC Core 3.1.3.7 would allow trusting the TLS back channel
+instead; verifying costs little and does not depend on how that channel is deployed.
 """
 from __future__ import annotations
 
@@ -14,10 +13,10 @@ import base64
 import hashlib
 import json
 import secrets
-import time
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -125,11 +124,6 @@ async def login(next: str | None = None):
         "code_challenge": challenge, "code_challenge_method": "S256"}), status_code=302)
 
 
-def _claims(id_token: str) -> dict:
-    payload = id_token.split(".")[1]
-    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-
-
 def resolve_role(roles: list[str]) -> str:
     """Exactly one application role per identity. A user holding e.g. ML Engineer AND
     Approver would defeat separation of duties, so that is refused, not merged."""
@@ -159,13 +153,15 @@ async def callback(request: Request, code: str, state: str):
                          {"method": "oidc", "status": tok.status_code})
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "code exchange failed")
         tokens = tok.json()
-        claims = _claims(tokens["id_token"])
-        aud = claims.get("aud")
-        if (claims.get("iss") != doc["issuer"] or claims.get("nonce") != pending["nonce"]
-                or settings.oidc_client_id not in (aud if isinstance(aud, list) else [aud])
-                or claims.get("exp", 0) < time.time()):
+        try:
+            claims = await auth.verified_claims(
+                tokens["id_token"], doc["jwks_uri"], issuer=doc["issuer"],
+                audience=settings.oidc_client_id, require=["sub", "nonce"])
+        except jwt.PyJWTError:
+            claims = None
+        if claims is None or claims["nonce"] != pending["nonce"]:
             await _audit(request, "anonymous", "-", "auth.login", "FAILURE",
-                         {"method": "oidc", "reason": "id_token claims"})
+                         {"method": "oidc", "reason": "id_token rejected"})
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "id_token rejected")
         info = await c.get(doc["userinfo_endpoint"],
                            headers={"authorization": f"Bearer {tokens['access_token']}"})
