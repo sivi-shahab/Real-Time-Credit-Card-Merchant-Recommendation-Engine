@@ -111,9 +111,26 @@ audit trail (threat E-4). Scripts run from the host with `.env` still use the ow
 
 **Signing in.** The browser only ever holds an opaque `HttpOnly` session cookie issued by
 the BFF (`/bff/*`, [ADR-0006](docs/adr/0006-bff-session-and-oidc.md)); mutations carry a
-CSRF token. SSO users (Keycloak, one per role): `viewer`, `analyst`, `marketing`,
-`mlengineer`, `operator`, `approver`, `auditor` — password `<user>-local-pass`. User
-`conflicted` holds ML Engineer + Approver and is refused at login by design.
+CSRF token.
+
+SSO users: open http://localhost:5173, choose **Masuk dengan SSO**, and sign in on the
+Keycloak page (realm `rec`, `deploy/keycloak/rec-realm.json`). One user per role; these
+passwords exist only in the local realm.
+
+| Username | Password | Role | Can |
+|---|---|---|---|
+| `operator` | `operator-local-pass` | Platform Operator | datasets, simulator, transaction replay, customers, erasure requests, model rollback, audit log |
+| `analyst` | `analyst-local-pass` | Analyst | read customers and transactions, preview recommendations |
+| `marketing` | `marketing-local-pass` | Marketing Operator | edit merchants and promotions, preview recommendations |
+| `mlengineer` | `mlengineer-local-pass` | ML Engineer | datasets, simulator, train models, request learning-setting changes |
+| `approver` | `approver-local-pass` | Approver | promote and roll back models, approve promotions, erasures and learning settings |
+| `auditor` | `auditor-local-pass` | Auditor | read-only, including the audit log and erasures |
+| `viewer` | `viewer-local-pass` | Viewer | read-only overview: merchants, promotions, models, metrics |
+| `conflicted` | `conflicted-local-pass` | ML Engineer + Approver | refused at login by design: one identity, one role (SEC-001) |
+
+Separation of duties shows in the table: the ML Engineer who trains a model cannot promote
+it, and an erasure is requested by one person and approved by another. The roles and
+their permissions are enforced by the backend (`rec/api/auth.py`), not the UI.
 
 Demo bearer tokens work only when `ENVIRONMENT` is local/test/ci, for scripts and the
 local "demo token" login: `admin-token` (Platform Operator), `analyst-token`,
