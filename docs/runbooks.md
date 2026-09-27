@@ -104,7 +104,8 @@ directly: it holds a session-level advisory lock.
 ## stream-scaling
 Consumers scale by partition within the `STREAM_GROUP_ID` group (ADR-0014): add consumer
 processes up to the partition count; each takes a share of partitions on rebalance, and a
-customer's events stay ordered. Watch consumer lag, not CPU. If adding consumers stops
+customer's events stay ordered. Watch consumer lag, not CPU (locally: Kafka UI at
+http://localhost:8080, Consumers). If adding consumers stops
 helping, check Redis CPU first (`INFO commandstats`: `hgetall`): it was the limit at ~830
 events/s on a single Redis. Several consumers on one host need distinct
 `STREAM_METRICS_PORT`s. Measure with

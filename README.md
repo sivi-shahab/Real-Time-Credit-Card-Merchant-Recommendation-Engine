@@ -92,7 +92,8 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 ```bash
 cp .env.example .env
 docker compose up -d --build   # kafka, postgres, redis, migrate, api, stream, ranking,
-                               # worker, mlflow, dashboard, keycloak, prometheus
+                               # worker, mlflow, dashboard, keycloak, prometheus,
+                               # jaeger, kafka-ui
 ```
 
 `migrate` applies `db/schema.sql` as the database owner and exits; every service then
@@ -108,6 +109,7 @@ audit trail (threat E-4). Scripts run from the host with `.env` still use the ow
 | Ranking   | http://localhost:8100        | batch inference, `/health` lists loaded models |
 | MLflow    | http://localhost:5000        | runs, metrics, artifacts, model registry |
 | Jaeger    | http://localhost:16686       | traces from api and ranking; search a `traceId` |
+| Kafka UI  | http://localhost:8080        | topics, messages, consumer groups and lag (read-only) |
 
 **Signing in.** The browser only ever holds an opaque `HttpOnly` session cookie issued by
 the BFF (`/bff/*`, [ADR-0006](docs/adr/0006-bff-session-and-oidc.md)); mutations carry a

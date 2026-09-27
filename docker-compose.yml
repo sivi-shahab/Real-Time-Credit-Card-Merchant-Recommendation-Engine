@@ -51,6 +51,19 @@ services:
       timeout: 10s
       retries: 20
 
+  # Browse topics, messages, consumer groups and lag at http://localhost:8080. Read-only:
+  # it has no login of its own, so it cannot delete topics or produce; set READONLY to
+  # "false" locally if you need that. Local tool only, not part of a deployment.
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.4.2
+    environment:
+      KAFKA_CLUSTERS_0_NAME: rec-engine
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_READONLY: "true"
+    ports: ["8080:8080"]
+    depends_on:
+      kafka: {condition: service_healthy}
+
   postgres:
     image: postgres:16-alpine
     environment:
