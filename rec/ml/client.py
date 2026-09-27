@@ -2,10 +2,13 @@
 which the serving path turns into the baseline ranking (SERV-003, AC-004)."""
 from __future__ import annotations
 
+import base64
 import logging
 
 import httpx
+import numpy as np
 
+from rec.ml.vectorize import FEATURE_NAMES
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.settings import settings
 
@@ -66,11 +69,17 @@ async def score(model_version: str, candidates: list[dict[str, float]], *,
     if not sha256:  # a model recorded before T-4 has no digest: fail closed, serve baseline
         raise RankingUnavailable("ARTIFACT_DIGEST_MISSING")
     try:
+        rows = np.asarray([[c[name] for name in FEATURE_NAMES] for c in candidates],
+                          dtype="<f4")
+    except KeyError as exc:
+        raise RankingUnavailable(f"MISSING_FEATURE:{exc.args[0]}")
+    try:
         response = await client().post("/v1/score", json={
             "modelVersion": model_version,
             "modelSha256": sha256,
             "featureSchemaVersion": VECTOR_SCHEMA_VERSION,
-            "candidates": candidates,
+            "count": len(candidates),
+            "rows": base64.b64encode(rows.tobytes()).decode(),
         })
     except httpx.TimeoutException:
         raise RankingUnavailable("RANKING_TIMEOUT")

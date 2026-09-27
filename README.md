@@ -136,6 +136,8 @@ python scripts/loadtest.py api --concurrency 8 --seconds 30   # latency/throughp
 `ab`/k6 or the generator becomes what you measure.
 Customer calls are limited to 60 a minute per customer (D-1); load tests need
 `RATE_LIMIT_RECOMMENDATIONS_PER_MINUTE=0` on the API.
+On WSL, ports published by Docker go through a userland proxy that caps large requests
+near 200/s; load-test service to service, not through those ports.
 The scripts call `python3`; run them with the venv active (or `.venv/bin` on `PATH`).
 
 `smoke_e2e.sh` fails loudly if online aggregates diverge from an offline recomputation
@@ -326,10 +328,11 @@ most:
    Redis client), not waiting on Redis: two round trips per event now. The design scales by
    partition and consumer replica, about 45 of each at today's rate (the local topic has
    6); that needs a load test on representative hardware.
-2. **API latency proven on one host only.** 32 clients, 8 uvicorn workers: p95 101–168 ms
-   cached, 145–173 ms with every request a cache miss. Simulator commands reach whichever
-   worker is replaying through the run's status in Postgres, so the admin API runs the
-   same workers.
+2. **Latency proven on one host only.** 32 clients: p95 101–168 ms cached, 145–173 ms
+   with every request a cache miss on the baseline, 376–419 ms with the model serving
+   every request (target 500 ms). API and ranking each run 8 workers. Simulator commands
+   reach whichever worker is replaying through the run's status in Postgres, so the admin
+   API runs the same workers.
 3. **Erasure scope.** Kafka retention, dataset files on disk (filtered on read, not
    rewritten), MLflow artifacts of older models and immutable audit rows are outside the
    automated erasure; a restore from a backup older than an erasure brings the customer

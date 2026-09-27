@@ -261,11 +261,10 @@ def _latency_p95(booster: xgb.Booster, test: pd.DataFrame, *, batch: int = 200,
     sample = test[list(FEATURE_NAMES)].head(batch).to_numpy(dtype=np.float32)
     if not len(sample):
         return 0.0
-    matrix = xgb.DMatrix(sample, feature_names=list(FEATURE_NAMES))
     timings = []
-    for _ in range(repeats):
+    for _ in range(repeats):  # the call the ranking service makes, input to output
         started = time.perf_counter()
-        booster.predict(matrix)
+        booster.inplace_predict(sample)
         timings.append((time.perf_counter() - started) * 1000)
     return float(np.percentile(timings, 95))
 

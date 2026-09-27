@@ -19,6 +19,10 @@ Recommendation p95 > 200 ms for 10 min.
    invalidation churn (a promotion or catalog change invalidates everything — SERV-004).
 2. Check `ranking_inference_seconds` and the guardrail status
    (`GET /admin/v1/models/guardrail/status`). If the model arm is slow, roll back (below).
+   `ranking_degraded_total{reason="RANKING_TIMEOUT"}` rising while inference stays ~1 ms
+   means the ranking service is out of capacity, not the model: one worker scores about
+   80 requests/s, so raise its `WEB_CONCURRENCY` (with `RANKING_THREADS=1`) or add
+   replicas.
 3. Check Postgres (`pg_stat_activity`) and Redis latency; the serving path reads both.
 4. CPU-bound API processes: raise `WEB_CONCURRENCY` (uvicorn workers per container) up to
    the cores it has, or add replicas. Keep `WEB_CONCURRENCY x PG_MAX_CONNECTIONS` plus the

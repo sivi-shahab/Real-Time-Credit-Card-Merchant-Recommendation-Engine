@@ -1,4 +1,5 @@
 """Threat T-4: the ranking service loads only the artifact training recorded."""
+import base64
 import hashlib
 
 import numpy as np
@@ -25,9 +26,10 @@ def model(tmp_path, monkeypatch):
 
 
 def _score(client, digest):
+    row = np.full((1, len(FEATURE_NAMES)), 0.5, dtype="<f4")
     return client.post("/v1/score", json={
-        "modelVersion": "m-1", "modelSha256": digest,
-        "candidates": [{name: 0.5 for name in FEATURE_NAMES}]})
+        "modelVersion": "m-1", "modelSha256": digest, "count": 1,
+        "rows": base64.b64encode(row.tobytes()).decode()})
 
 
 def test_artifact_replaced_after_training_is_refused(model):
@@ -82,3 +84,30 @@ def test_only_the_api_reaches_the_ranking_service_and_memory_is_bounded(tmp_path
         assert warm(version, ok) == 200
     assert service.registry.loaded() == ["m-0", "m-2"]
     assert warm("m-1", ok) == 200, "an evicted model reloads on its next use"
+
+
+async def test_the_client_and_the_service_agree_on_every_score(model, monkeypatch):
+    """The float32 wire format round-trips exactly, and a malformed matrix is refused."""
+    import httpx
+
+    from rec.ml import client as ranking_client
+
+    path, digest = model
+    monkeypatch.setattr(ranking_client, "_client", httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=service.app), base_url="http://ranking"))
+    rng = np.random.default_rng(7)
+    candidates = [{name: float(rng.random()) for name in FEATURE_NAMES} for _ in range(37)]
+    scores, _ = await ranking_client.score("m-1", candidates, sha256=digest)
+
+    booster = xgb.Booster()
+    booster.load_model(path)
+    expected = booster.predict(xgb.DMatrix(
+        np.asarray([[c[n] for n in FEATURE_NAMES] for c in candidates], dtype=np.float32),
+        feature_names=list(FEATURE_NAMES)))
+    assert np.array_equal(np.asarray(scores, dtype=np.float32), expected)
+
+    short = TestClient(service.app).post("/v1/score", json={
+        "modelVersion": "m-1", "modelSha256": digest, "count": 2,
+        "rows": base64.b64encode(b"\0" * (len(FEATURE_NAMES) * 4)).decode()})
+    assert short.status_code == 422
+    await ranking_client.close()

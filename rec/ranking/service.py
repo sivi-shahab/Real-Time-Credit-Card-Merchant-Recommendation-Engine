@@ -5,6 +5,7 @@ rather than simulated, and lets a model be loaded or swapped without restarting 
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import logging
@@ -18,12 +19,11 @@ from threading import RLock
 import numpy as np
 import xgboost as xgb
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from rec.ml.vectorize import FEATURE_NAMES
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
-from rec.obs import INFERENCE_LATENCY, setup_logging, setup_tracing
+from rec.obs import INFERENCE_LATENCY, metrics_body, setup_logging, setup_tracing
 from rec.settings import DEV_ENVIRONMENTS, settings
 
 log = logging.getLogger("ranking")
@@ -119,7 +119,10 @@ class ScoreRequest(BaseModel):
     modelVersion: str
     modelSha256: str = Field(pattern=SHA256)
     featureSchemaVersion: str = VECTOR_SCHEMA_VERSION
-    candidates: list[dict[str, float]] = Field(min_length=1, max_length=500)
+    # Candidates x FEATURE_NAMES as little-endian float32, base64. JSON floats cost the
+    # API ~17 ms to encode and this service ~5 ms to parse per request; this costs ~0.
+    count: int = Field(ge=1, le=500)
+    rows: str = Field(max_length=4 * ((500 * len(FEATURE_NAMES) * 4 + 2) // 3))
 
 
 class ScoreResponse(BaseModel):
@@ -146,15 +149,18 @@ def score(body: ScoreRequest) -> ScoreResponse:
     except ArtifactIntegrityError as exc:
         raise HTTPException(status.HTTP_412_PRECONDITION_FAILED, str(exc))
 
-    missing = [name for name in FEATURE_NAMES if name not in body.candidates[0]]
-    if missing:
+    try:
+        raw = base64.b64decode(body.rows, validate=True)
+    except ValueError:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "rows is not base64")
+    if len(raw) != body.count * len(FEATURE_NAMES) * 4:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            f"missing features: {missing[:5]}")
-
-    rows = np.asarray([[c[name] for name in FEATURE_NAMES] for c in body.candidates],
-                      dtype=np.float32)
+                            f"rows must hold {body.count} x {len(FEATURE_NAMES)} float32")
+    rows = np.frombuffer(raw, dtype="<f4").reshape(body.count, len(FEATURE_NAMES))
     started = time.perf_counter()
-    scores = booster.predict(xgb.DMatrix(rows, feature_names=list(FEATURE_NAMES)))
+    # Straight from the array: building a DMatrix spun up a thread per core on every
+    # request, 20x the prediction itself. Columns are in FEATURE_NAMES order (above).
+    scores = booster.inplace_predict(rows)
     elapsed = (time.perf_counter() - started) * 1000
     INFERENCE_LATENCY.labels(body.modelVersion).observe(elapsed / 1000)
     return ScoreResponse(
@@ -165,7 +171,8 @@ def score(body: ScoreRequest) -> ScoreResponse:
 
 @app.get("/metrics", include_in_schema=False)
 def metrics():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    body, media_type = metrics_body()
+    return Response(body, media_type=media_type)
 
 
 @app.get("/health", tags=["ops"])

@@ -87,7 +87,7 @@ services:
 
   api:
     build: .
-    # no command: the image's, uvicorn with $WEB_CONCURRENCY workers (Dockerfile)
+    # no command: the image's, scripts/serve.sh with $WEB_CONCURRENCY workers
     environment:
       <<: *backend_env
       # p95 < 200 ms at 32 concurrent clients, cache misses included, took 8 processes on
@@ -107,8 +107,15 @@ services:
 
   ranking:
     build: .
-    command: uvicorn rec.ranking.service:app --host 0.0.0.0 --port 8100
-    environment: *backend_env
+    command: ["sh", "scripts/serve.sh", "rec.ranking.service:app", "8100"]
+    environment:
+      <<: *backend_env
+      # One process scores ~80 requests/s of 200 candidates; 8 single-threaded workers
+      # held p95 < 500 ms end to end at 32 clients (release gate). Workers x
+      # RANKING_THREADS is the cores it uses.
+      WEB_CONCURRENCY: "8"
+      RANKING_THREADS: "1"
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
     ports: ["8100:8100"]
     volumes: ["./data:/app/data"]
     healthcheck:

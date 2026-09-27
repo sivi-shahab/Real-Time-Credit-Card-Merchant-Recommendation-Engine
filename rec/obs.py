@@ -11,7 +11,16 @@ import logging
 import os
 import re
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    REGISTRY,
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
+from prometheus_client.multiprocess import MultiProcessCollector
 
 trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id",
                                                                           default=None)
@@ -57,6 +66,16 @@ def setup_logging(level: int = logging.INFO) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+
+
+def metrics_body() -> tuple[bytes, str]:
+    """The Prometheus scrape. With several uvicorn workers (WEB_CONCURRENCY) every worker
+    writes to PROMETHEUS_MULTIPROC_DIR and whichever answers reports for all."""
+    registry = REGISTRY
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        registry = CollectorRegistry()
+        MultiProcessCollector(registry)
+    return generate_latest(registry), CONTENT_TYPE_LATEST
 
 
 def instrument(app=None) -> None:

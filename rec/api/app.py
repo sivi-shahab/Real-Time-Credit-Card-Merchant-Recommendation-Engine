@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -16,8 +15,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, s
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from opentelemetry import trace
-from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, generate_latest
-from prometheus_client.multiprocess import MultiProcessCollector
 from pydantic import BaseModel, Field
 
 from rec.api import bff, jobs, learning_settings, ml_jobs, service
@@ -36,6 +33,7 @@ from rec.obs import (
     HTTP_LATENCY,
     HTTP_REQUESTS,
     LEARNING_SWITCH,
+    metrics_body,
     setup_logging,
     setup_tracing,
     trace_id_var,
@@ -944,14 +942,9 @@ async def sse(p: Annotated[Principal, Depends(require("metrics:read"))]):
 @app.get("/metrics", tags=["ops"], include_in_schema=False)
 async def metrics():
     """Prometheus scrape. No PII in any label; reachable only on the internal network in
-    production (network policy), like /health. With several uvicorn workers
-    (WEB_CONCURRENCY) every worker writes to PROMETHEUS_MULTIPROC_DIR and any one of them
-    answers for all."""
-    registry = REGISTRY
-    if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
-        registry = CollectorRegistry()
-        MultiProcessCollector(registry)
-    return Response(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+    production (network policy), like /health."""
+    body, media_type = metrics_body()
+    return Response(body, media_type=media_type)
 
 
 @app.get("/health", tags=["ops"])
