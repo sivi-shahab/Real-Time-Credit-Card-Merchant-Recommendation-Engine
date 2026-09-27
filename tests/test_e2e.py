@@ -900,6 +900,21 @@ async def test_feedback_must_match_a_slate_that_was_served(client, replayed):
         assert await click(ids[0], served[1]) == 422             # wrong merchant
         assert await click(ids[0], served[0], theirs, other) == 422  # not their impression
         assert await click(ids[0], served[0]) == 202
+
+        # without its own ids the app gets the generated ones back, in item order, and a
+        # click can name them
+        again = (await client.get(f"/api/v1/customer/{cid}/recommendations?refresh=true",
+                                  headers=own)).json()
+        shown = [item["merchantId"] for item in again["recommendations"]][:2]
+        sent = await client.post("/api/v1/feedback/impressions", headers=own, json={
+            "requestId": again["requestId"], "customerId": cid,
+            "items": [{"merchantId": m, "position": n} for n, m in enumerate(shown)]})
+        assert sent.status_code == 202
+        generated = sent.json()["impressionIds"]
+        ids += generated
+        assert sent.json()["accepted"] == len(generated) == len(shown)
+        assert len(set(generated)) == len(generated)
+        assert await click(generated[1], shown[1]) == 202
     finally:
         await conn.execute("DELETE FROM interactions WHERE impression_id = ANY($1)", ids)
         await conn.execute("DELETE FROM impressions WHERE impression_id = ANY($1)", ids)

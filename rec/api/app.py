@@ -193,6 +193,13 @@ class ImpressionBatch(BaseModel):
     items: list[ImpressionItem] = Field(default_factory=list, max_length=MAX_RESULTS)
 
 
+class ImpressionsAccepted(BaseModel):
+    accepted: int
+    # One per item, in order: the client's own id, or the one generated for it. A click
+    # names its impression by this id (POST /api/v1/feedback/interactions).
+    impressionIds: list[str]
+
+
 def _own_feedback(p: Principal, customer_id: str) -> None:
     """Feedback trains models (ADR-0007), so only the customer it describes may send it.
     No staff role has a reason to, and letting one would open a poisoning path (T-7)."""
@@ -202,6 +209,7 @@ def _own_feedback(p: Principal, customer_id: str) -> None:
 
 
 @app.post("/api/v1/feedback/impressions", status_code=202, tags=["feedback"],
+          response_model=ImpressionsAccepted,
           dependencies=[Depends(rate_limited("feedback"))])
 async def record_impressions(batch: ImpressionBatch,
                              p: Annotated[Principal, Depends(principal)]):
@@ -219,16 +227,16 @@ async def record_impressions(batch: ImpressionBatch,
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                                 f"merchant {item.merchantId} was not served at position "
                                 f"{item.position} in this response")
+    ids = [i.impressionId or str(uuid.uuid4()) for i in batch.items]
     conn = await pg.pool()
     await conn.executemany(
         """INSERT INTO impressions (impression_id, request_id, customer_id, merchant_id,
              position, model_version, occurred_at) VALUES ($1,$2,$3,$4,$5,$6,$7)
            ON CONFLICT (impression_id) DO NOTHING""",
-        [(i.impressionId or str(uuid.uuid4()), batch.requestId, batch.customerId,
-          i.merchantId, i.position, served[MODEL_FIELD],
-          datetime.now(UTC)) for i in batch.items])
+        [(impression_id, batch.requestId, batch.customerId, i.merchantId, i.position,
+          served[MODEL_FIELD], datetime.now(UTC)) for impression_id, i in zip(ids, batch.items)])
     await store.incr_metric("impressions", len(batch.items))
-    return {"accepted": len(batch.items)}
+    return ImpressionsAccepted(accepted=len(batch.items), impressionIds=ids)
 
 
 class Interaction(BaseModel):

@@ -356,6 +356,27 @@
         "title": "ImpressionItem",
         "type": "object"
       },
+      "ImpressionsAccepted": {
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "integer"
+          },
+          "impressionIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Impressionids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "accepted",
+          "impressionIds"
+        ],
+        "title": "ImpressionsAccepted",
+        "type": "object"
+      },
       "Interaction": {
         "properties": {
           "customerId": {
@@ -2745,7 +2766,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ImpressionsAccepted"
+                }
               }
             },
             "description": "Successful Response"
