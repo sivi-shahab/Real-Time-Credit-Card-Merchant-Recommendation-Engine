@@ -177,6 +177,10 @@ Kubernetes secrets, or a secret-manager CSI mount). Nothing secret is in the ima
 - **Postgres password:** add the new password on the role (`ALTER ROLE ... PASSWORD`),
   deploy the new DSN, restart services, then remove the old credential. Keep the app on a
   non-owner role in production, so it cannot drop the audit trigger.
+- **Ranking service token** (`ranking_service_token`, D-5): the ranking service accepts
+  exactly one value, so rotate with both down briefly or at a quiet moment: deploy the
+  new value to the ranking service and the API together. A mismatch degrades serving to
+  the baseline (`ranking_degraded_total{reason="RANKING_HTTP_401"}`), it does not fail it.
 - **Session store:** there is no signing key — sessions are opaque random ids. To force
   everyone out, `redis-cli --scan --pattern 'sess:*' | xargs redis-cli del`.
 

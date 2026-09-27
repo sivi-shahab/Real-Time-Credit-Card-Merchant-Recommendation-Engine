@@ -90,7 +90,7 @@ fraud detection.
 | D-2 | Oversized requests | B1, B5 | `limit ≤ 20`, ≤ 200 candidates, score batch ≤ 500, list pages ≤ 200 | `test_errors_are_uniform_and_requests_are_bounded` | Mitigated |
 | D-3 | Slow or failing ranking takes serving down | B5 | 400 ms client timeout, fallback to baseline, guardrail auto-rollback | `test_ac004_fallback_when_ranking_dependency_fails`, `test_guardrail_rolls_back_a_failing_live_model`, live drill | Mitigated |
 | D-4 | Poison event stalls the consumer | B3 | Per-event isolation, quarantine + DLQ, consumer keeps going | `test_pipeline_applies_and_quarantines_per_spec`, `scripts/chaos.sh` | Mitigated |
-| D-5 | Ranking service memory exhausted by warming many versions | B5 | Unauthenticated `warm` endpoint, unbounded booster cache. Network policy so only the API can call it; bound the cache | — | Open |
+| D-5 | Ranking service memory exhausted by warming many versions | B5 | `/v1` needs the API's service token (closed outside dev when unset); at most `RANKING_MAX_MODELS` boosters, least recently used evicted and re-verified on reload; a model loads only if its file matches the recorded digest (T-4). Network policy so only the API reaches it is still recommended | `test_only_the_api_reaches_the_ranking_service_and_memory_is_bounded` | Mitigated |
 | D-6 | Simulator used to flood production | B3 | Disabled outside local/staging (SIM-003), capped TPS, Platform Operator only | `test_simulator_*` | Mitigated |
 | D-7 | Training starves serving: a large `tuneTrials`, or auto-retrain, competes with the API for CPU | B5 | Training, tuning, auto-retrain, the bandit and the uplift report run in the worker process (ADR-0012); the API only queues a job. `tuneTrials` ≤ 200 and ML Engineer only. Dataset generation still runs in the API | `test_training_is_queued_for_a_worker_and_claimed_once`, `test_a_job_its_worker_lost_is_failed_not_left_running` | Mitigated |
 | D-8 | Bandit contexts grow Redis memory with traffic | B4 | One small hash per served request, 8-day TTL; off by default. Needs capacity planning and a `maxmemory` policy before enabling at volume | — | Partial |
@@ -115,6 +115,5 @@ fraud detection.
    report clicks they never made and nothing rate-limits them; retained training exports
    keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
-3. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
-   that can exhaust ranking memory.
+3. **D-1** — no rate limiting at the edge.
 4. **E-4 / T-1** — the app's database role can undo the audit protection.

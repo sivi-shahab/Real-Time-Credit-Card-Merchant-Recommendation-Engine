@@ -10,20 +10,21 @@ import hmac
 import logging
 import re
 import time
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 
 import numpy as np
 import xgboost as xgb
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field
 
 from rec.ml.vectorize import FEATURE_NAMES
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
 from rec.obs import INFERENCE_LATENCY, setup_logging
-from rec.settings import settings
+from rec.settings import DEV_ENVIRONMENTS, settings
 
 log = logging.getLogger("ranking")
 
@@ -41,7 +42,8 @@ class ArtifactIntegrityError(Exception):
 
 
 class _Registry:
-    """Loaded boosters, keyed by model version. Small and bounded in practice.
+    """Loaded boosters, keyed by model version, least recently used evicted beyond
+    `ranking_max_models` (D-5).
 
     Every load is checked against the SHA-256 the registry recorded at training (T-4):
     the digest comes from Postgres through the caller, never from the shared volume that
@@ -51,7 +53,7 @@ class _Registry:
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._boosters: dict[str, tuple[xgb.Booster, str]] = {}
+        self._boosters: OrderedDict[str, tuple[xgb.Booster, str]] = OrderedDict()
 
     def get(self, model_version: str, sha256: str) -> xgb.Booster:
         if not re.fullmatch(MODEL_VERSION, model_version):
@@ -63,6 +65,7 @@ class _Registry:
                 if not hmac.compare_digest(digest, sha256):
                     raise ArtifactIntegrityError(
                         f"{model_version}: loaded artifact does not match the recorded digest")
+                self._boosters.move_to_end(model_version)
                 return booster
             path = Path(settings.model_dir) / f"{model_version}.json"
             if not path.exists():
@@ -83,6 +86,8 @@ class _Registry:
             # call — constant, independent of row count, and most of the latency budget.
             booster.set_param({"nthread": settings.ranking_threads})
             self._boosters[model_version] = (booster, digest)
+            while len(self._boosters) > max(1, settings.ranking_max_models):
+                self._boosters.popitem(last=False)
             return booster
 
     def loaded(self) -> list[str]:
@@ -95,6 +100,18 @@ class _Registry:
 
 
 registry = _Registry()
+
+
+def _caller(authorization: str = Header("")) -> None:
+    """D-5: only the API may score, warm or evict. Network policy should say the same."""
+    token = settings.ranking_service_token
+    if not token:
+        if settings.environment in DEV_ENVIRONMENTS:
+            return
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "RANKING_SERVICE_TOKEN is not configured")
+    if not hmac.compare_digest(authorization, f"Bearer {token}"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid service token")
 
 
 class ScoreRequest(BaseModel):
@@ -112,7 +129,8 @@ class ScoreResponse(BaseModel):
     scoredAt: datetime
 
 
-@app.post("/v1/score", response_model=ScoreResponse, tags=["ranking"])
+@app.post("/v1/score", response_model=ScoreResponse, tags=["ranking"],
+          dependencies=[Depends(_caller)])
 def score(body: ScoreRequest) -> ScoreResponse:
     """Batch inference. Rejects a feature-schema mismatch instead of scoring garbage."""
     if body.featureSchemaVersion != VECTOR_SCHEMA_VERSION:
@@ -165,7 +183,7 @@ class WarmRequest(BaseModel):
     modelSha256: str = Field(pattern=SHA256)
 
 
-@app.post("/v1/models/{model_version}/warm", tags=["ops"])
+@app.post("/v1/models/{model_version}/warm", tags=["ops"], dependencies=[Depends(_caller)])
 def warm(model_version: str, body: WarmRequest) -> dict:
     """Pre-load before a canary so the first real request is not the cold one."""
     try:
@@ -177,6 +195,6 @@ def warm(model_version: str, body: WarmRequest) -> dict:
     return {"modelVersion": model_version, "loaded": True}
 
 
-@app.delete("/v1/models/{model_version}", tags=["ops"])
+@app.delete("/v1/models/{model_version}", tags=["ops"], dependencies=[Depends(_caller)])
 def evict(model_version: str) -> dict:
     return {"modelVersion": model_version, "evicted": registry.evict(model_version)}

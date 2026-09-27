@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     ranking_timeout_ms: int = 400
     # Batches are small (<=200 rows); a wide thread pool costs more to start than it saves.
     ranking_threads: int = 2
+    # D-5: boosters kept in memory by the ranking service (live, previous, shadow/canary
+    # fit easily); an evicted one is reloaded, and re-verified, on its next use.
+    ranking_max_models: int = 4
+    # D-5: shared secret the API sends to the ranking service's /v1 endpoints. Empty is
+    # accepted only in dev environments.
+    ranking_service_token: str = ""
 
     # Static bearer tokens: scripts and tests only. Ignored outside DEV_ENVIRONMENTS, where
     # admins sign in through the BFF (OIDC) and machines need a real credential.

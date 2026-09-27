@@ -26,6 +26,8 @@ def client() -> httpx.AsyncClient:
     if _client is None:
         _client = httpx.AsyncClient(
             base_url=settings.ranking_service_url,
+            headers={"authorization": f"Bearer {settings.ranking_service_token}"}
+            if settings.ranking_service_token else None,
             timeout=httpx.Timeout(settings.ranking_timeout_ms / 1000),
         )
     return _client

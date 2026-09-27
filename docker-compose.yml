@@ -9,6 +9,8 @@ x-backend-env: &backend_env
   MODEL_DIR: /app/data/models
   MLFLOW_TRACKING_URI: sqlite:////app/data/mlflow.db
   RANKING_SERVICE_URL: http://ranking:8100
+  # D-5: the API's credential at the ranking service; both read it from here
+  RANKING_SERVICE_TOKEN: local-dev-ranking-token-change-me
   # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
   COOKIE_SECURE: "false"
   OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
