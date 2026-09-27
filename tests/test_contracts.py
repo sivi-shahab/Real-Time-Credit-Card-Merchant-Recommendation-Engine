@@ -58,7 +58,7 @@ class _Capture:
     def __init__(self):
         self.sent: list[tuple[str, dict]] = []
 
-    async def send(self, topic, value, key=None):
+    async def send(self, topic, value, key=None, headers=None):
         self.sent.append((topic, json.loads(value)))
 
     send_and_wait = send

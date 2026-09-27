@@ -47,7 +47,11 @@ Every error body, `x-correlation-id` header, log line and audit row carries a `t
 with tracing on it is the OpenTelemetry trace id, so it opens the request in the tracing
 UI (locally Jaeger, http://localhost:16686, or `GET /api/traces/<traceId>`). A client that
 sends its own `x-correlation-id` keeps it; it is then the span attribute `correlation.id`.
-- On when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (api and ranking). Production: sample with
+- Kafka carries the trace in message headers (`traceparent`): an event's trace runs from
+  its producer (locally the simulator, one trace per event) through the stream's
+  processing, its Redis and Postgres calls, and on into the DLQ or `customer.features`.
+  Events from a producer that does not trace start their own trace in the stream.
+- On when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (api, ranking, stream). Production: sample with
   `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1`;
   tracing every request cost about 30% of API throughput on the load-test host.
 - Spans carry SQL text and Redis command names only, never the values bound to them.
@@ -85,6 +89,10 @@ More than 5% of events quarantined. `GET /admin/v1/metrics/overview` →
 `quarantineByReason`. Quarantined events are in `transaction_log` (outcome `QUARANTINED`)
 and on `pipeline.dlq`. Fix the producer; do not hand-edit the log. Once fixed, re-send the
 events with **the same eventId** only if they were never applied.
+A message missing what `transaction_log` requires (event id, customer, time) is still
+quarantined and logged: its event id becomes `invalid:<hash of the message>` and its time
+the arrival time, so it cannot fail the batch and stall the partition. Messages that are
+not a JSON object at all only count in `undecodable_messages`.
 
 ## auto-retrain
 `AutoRetrainFailing`: an automatic check or training job failed. The worker log names the

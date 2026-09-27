@@ -1,8 +1,9 @@
 """PostgreSQL access. Thin asyncpg helpers; no ORM (nothing here needs one)."""
 from __future__ import annotations
 
+import hashlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import asyncpg
@@ -162,11 +163,32 @@ async def customer_redemption_counts(customer_id: str) -> dict[str, int]:
 
 def transaction_row(env: dict, outcome: str, reject_code: str | None = None,
                     reject_detail: str | None = None) -> tuple:
-    payload = env.get("payload", {})
-    return (env.get("eventId"), payload.get("transactionId"), payload.get("customerId"),
-            payload.get("merchantId"), payload.get("transactionType"),
-            int(payload.get("amountMinor") or 0), _ts(payload.get("occurredAt")), outcome,
-            reject_code, reject_detail, env.get("correlationId"), json.dumps(env, default=str))
+    """A row that can always be inserted. Quarantined messages can lack anything the
+    table requires, and a row that fails would fail the whole batch's flush: the
+    consumer would stop before committing and read the same message forever."""
+    payload = env.get("payload") if isinstance(env.get("payload"), dict) else {}
+    envelope = json.dumps(env, default=str, sort_keys=True)
+    event_id = env.get("eventId")
+    if not isinstance(event_id, str) or not event_id:
+        # stable across redeliveries, so ON CONFLICT still de-duplicates
+        event_id = "invalid:" + (str(event_id) if event_id is not None
+                                 else hashlib.sha256(envelope.encode()).hexdigest())
+    try:
+        amount = int(payload.get("amountMinor") or 0)
+    except (TypeError, ValueError, OverflowError):
+        amount = 0
+    try:
+        occurred = _ts(payload.get("occurredAt"))
+    except (TypeError, ValueError):
+        occurred = datetime.now(UTC)
+    return (event_id, _text(payload.get("transactionId")), _text(payload.get("customerId")),
+            _text(payload.get("merchantId")), _text(payload.get("transactionType")),
+            amount, occurred, outcome, reject_code, reject_detail,
+            _text(env.get("correlationId")) or None, envelope)
+
+
+def _text(value) -> str:
+    return "" if value is None else str(value)
 
 
 async def log_transactions(rows: list[tuple]) -> None:

@@ -1369,7 +1369,7 @@ async def test_simulator_never_skips_an_event_when_the_broker_fails(client, data
         async def stop(self):
             pass
 
-        async def send_and_wait(self, _topic, value, key=None):
+        async def send_and_wait(self, _topic, value, key=None, headers=None):
             if state["down"] and len(sent) == 5:
                 raise ConnectionError("broker down")
             sent.append(value)
@@ -1481,7 +1481,7 @@ async def test_simulator_commands_reach_a_replay_on_another_worker(client, datas
         async def stop(self):
             live["now"] -= 1
 
-        async def send_and_wait(self, _topic, value, key=None):
+        async def send_and_wait(self, _topic, value, key=None, headers=None):
             await asyncio.sleep(0.002)
             sent.append(value)
 
@@ -1553,3 +1553,31 @@ async def test_each_customer_is_rate_limited_on_its_own(client, replayed, monkey
 
     monkeypatch.setattr(auth, "redis", lambda: Down())
     assert (await get(a)).status_code == 200, "fails open"
+
+
+async def test_malformed_messages_are_quarantined_not_poison(replayed):
+    """A message missing what transaction_log requires must still be quarantined and
+    logged: failing the batch flush would stop the consumer before it commits, and it
+    would read the same message again forever."""
+    sent = []
+
+    class DLQ:
+        async def send_and_wait(self, topic, value, key=None, headers=None):
+            sent.append(topic)
+
+    processor = FeatureProcessor(store, DLQ(), batch=True)
+    poison = [
+        {"eventId": "poison-no-payload"},
+        {"eventId": "poison-no-time", "payload": {"customerId": "C0000001"}},
+        {"payload": {"occurredAt": "2026-03-01T00:00:00Z", "amountMinor": "lots"}},
+        {"eventId": 42, "payload": "not an object"},
+    ]
+    for raw in poison:
+        assert await processor.handle(raw) == "SCHEMA_INVALID"
+    await processor.flush()  # must not raise
+    assert sent == [settings.topic_dlq] * len(poison)
+    conn = await pg.pool()
+    logged = await conn.fetchval(
+        """SELECT count(*) FROM transaction_log WHERE outcome = 'QUARANTINED'
+             AND (event_id LIKE 'poison-%' OR event_id LIKE 'invalid:%' OR event_id = '42')""")
+    assert logged >= len(poison)

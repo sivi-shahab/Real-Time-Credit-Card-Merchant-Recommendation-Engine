@@ -1,5 +1,6 @@
 """Observability shared by api, ranking and stream: JSON logs with trace ids and
-redaction (SEC-002), Prometheus metrics, and OpenTelemetry traces for api and ranking.
+redaction (SEC-002), Prometheus metrics, and OpenTelemetry traces for api, ranking and
+stream, carried across Kafka in message headers.
 
 Redaction is a last line of defence; code should not log credentials in the first place.
 """
@@ -93,6 +94,23 @@ def instrument(app=None) -> None:
                          RedisInstrumentor()):
         if not instrumentor.is_instrumented_by_opentelemetry:
             instrumentor.instrument()
+
+
+def kafka_headers() -> list[tuple[str, bytes]]:
+    """The current trace as Kafka headers (W3C `traceparent`); empty when not tracing."""
+    from opentelemetry import propagate
+
+    carrier: dict[str, str] = {}
+    propagate.inject(carrier)
+    return [(key, value.encode()) for key, value in carrier.items()]
+
+
+def kafka_context(headers):
+    """The trace a consumed message carries, to parent the span that processes it."""
+    from opentelemetry import propagate
+
+    return propagate.extract({key: value.decode("latin-1") for key, value in headers or ()
+                              if isinstance(value, bytes)})
 
 
 def setup_tracing(service: str, app=None) -> bool:

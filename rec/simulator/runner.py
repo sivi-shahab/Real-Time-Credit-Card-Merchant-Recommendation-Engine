@@ -17,7 +17,11 @@ import uuid
 from pathlib import Path
 
 from aiokafka import AIOKafkaProducer
+from opentelemetry import trace
+from opentelemetry.context import Context
+from opentelemetry.trace import SpanKind
 
+from rec.obs import kafka_headers
 from rec.settings import settings
 from rec.store import pg
 from rec.store.redis_store import _client
@@ -33,6 +37,7 @@ TRANSITIONS = {
 SEND_ATTEMPTS = 5
 COMMAND_TARGET = {"start": "RUNNING", "pause": "PAUSED", "resume": "RUNNING", "stop": "STOPPED"}
 STATUS_POLL_SECONDS = 0.25
+_tracer = trace.get_tracer("rec.simulator")
 LOCK_TTL_SECONDS = 5  # a crashed replay frees its run this long after its last poll
 
 
@@ -151,20 +156,31 @@ class SimulationManager:
                         await self.redis().expire(key, LOCK_TTL_SECONDS)
                         polled = time.perf_counter()
                     envelope = json.loads(line)
-                    # SIM-002: never skip an event. Retry with backoff; if the broker
-                    # stays down, fail with the checkpoint still on this event.
-                    for attempt in range(SEND_ATTEMPTS):
-                        try:
-                            await producer.send_and_wait(
-                                settings.topic_transactions, line.encode(),
-                                key=envelope["payload"]["customerId"].encode())
-                            sent += 1
-                            break
-                        except Exception:
-                            failed += 1
-                            if attempt == SEND_ATTEMPTS - 1:
-                                raise
-                            await asyncio.sleep(min(2 ** attempt, 10))
+                    # One trace per event, as each would start at the card system; the
+                    # stream continues it from the message headers.
+                    with _tracer.start_as_current_span(
+                            f"{settings.topic_transactions} publish", context=Context(),
+                            kind=SpanKind.PRODUCER,
+                            attributes={"messaging.system": "kafka",
+                                        "messaging.destination.name":
+                                            settings.topic_transactions,
+                                        "messaging.message.id": envelope.get("eventId", "")}):
+                        headers = kafka_headers()
+                        # SIM-002: never skip an event. Retry with backoff; if the broker
+                        # stays down, fail with the checkpoint still on this event.
+                        for attempt in range(SEND_ATTEMPTS):
+                            try:
+                                await producer.send_and_wait(
+                                    settings.topic_transactions, line.encode(),
+                                    key=envelope["payload"]["customerId"].encode(),
+                                    headers=headers)
+                                sent += 1
+                                break
+                            except Exception:
+                                failed += 1
+                                if attempt == SEND_ATTEMPTS - 1:
+                                    raise
+                                await asyncio.sleep(min(2 ** attempt, 10))
                     offset = index + 1
                     window_sent += 1
                     if window_sent >= 200:

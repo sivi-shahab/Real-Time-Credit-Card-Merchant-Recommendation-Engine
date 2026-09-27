@@ -12,17 +12,20 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from opentelemetry import trace
+from opentelemetry.trace import SpanKind
 from prometheus_client import start_http_server
 from pydantic import ValidationError
 
 from rec.core.ledger import LATE_ARRIVAL_LIMIT_HOURS, Reject, apply_event
 from rec.core.models import Envelope
-from rec.obs import EVENTS, setup_logging
+from rec.obs import EVENTS, kafka_context, kafka_headers, setup_logging, setup_tracing
 from rec.settings import settings
 from rec.store import pg
 from rec.store.redis_store import OnlineStore
 
 log = logging.getLogger("stream")
+_tracer = trace.get_tracer("rec.stream")
 
 
 class FeatureProcessor:
@@ -44,6 +47,20 @@ class FeatureProcessor:
         if not self.batch:
             await self.flush()
         return outcome
+
+    async def handle_message(self, raw: dict, headers=None, *,
+                             now: datetime | None = None) -> str:
+        """handle(), in a consumer span that continues the producer's trace from the
+        message headers, so the Redis and Postgres work nests under it."""
+        with _tracer.start_as_current_span(
+                f"{settings.topic_transactions} process", context=kafka_context(headers),
+                kind=SpanKind.CONSUMER,
+                attributes={"messaging.system": "kafka",
+                            "messaging.destination.name": settings.topic_transactions,
+                            "messaging.message.id": str(raw.get("eventId", ""))}) as span:
+            outcome = await self.handle(raw, now=now)
+            span.set_attribute("rec.outcome", outcome)
+            return outcome
 
     async def flush(self) -> None:
         # ponytail: Redis state is written before its log row is flushed, so a crash in
@@ -139,6 +156,7 @@ class FeatureProcessor:
                 json.dumps({"rejectCode": code, "detail": detail,
                             "event": json.dumps(raw, default=str)}).encode(),
                 key=str(raw.get("eventId", "")).encode(),
+                headers=kafka_headers(),
             )
 
     async def _emit_feature_update(self, customer_id: str, version: int) -> None:
@@ -151,11 +169,13 @@ class FeatureProcessor:
             json.dumps({"customerId": customer_id, "featureVersion": version,
                         "producedAt": datetime.now(UTC).isoformat()}).encode(),
             key=customer_id.encode(),
+            headers=kafka_headers(),
         )
 
 
 async def run() -> None:
     setup_logging()
+    setup_tracing("rec-stream")
     start_http_server(9102)  # Prometheus scrape for the consumer
     store = OnlineStore()
     consumer = AIOKafkaConsumer(
@@ -181,31 +201,35 @@ async def run() -> None:
                 continue
             # Ordering only has to hold per customer, so customers run concurrently
             # while each customer's own events stay strictly sequential.
-            by_customer: dict[str, list[dict]] = {}
+            by_customer: dict[str, list[tuple[dict, list]]] = {}
             for records in batches.values():
                 for msg in records:
                     try:
                         raw = json.loads(msg.value)
                     except Exception:
+                        raw = None
+                    if not isinstance(raw, dict):  # not JSON, or JSON but no envelope
                         await store.incr_metric("undecodable_messages")
                         continue
-                    key = str(raw.get("payload", {}).get("customerId", ""))
-                    by_customer.setdefault(key, []).append(raw)
+                    payload = raw.get("payload")
+                    key = str(payload.get("customerId", "")) if isinstance(payload, dict) else ""
+                    by_customer.setdefault(key, []).append((raw, msg.headers))
 
-            async def run(events: list[dict]) -> None:
+            async def run(events: list[tuple[dict, list]]) -> None:
                 async with gate:
                     await _drain(events)
 
-            async def _drain(events: list[dict]) -> None:
-                for raw in events:
+            async def _drain(events: list[tuple[dict, list]]) -> None:
+                for raw, headers in events:
                     try:
-                        EVENTS.labels(await processor.handle(raw)).inc()
+                        EVENTS.labels(await processor.handle_message(raw, headers)).inc()
                     except Exception:  # keep the consumer alive; the event is logged
                         log.exception("handler failed for event %s", raw.get("eventId"))
                         await store.incr_metric("handler_errors")
 
             await asyncio.gather(*(run(events) for events in by_customer.values()))
-            await processor.flush()  # log rows land before the offsets move
+            with _tracer.start_as_current_span("transaction_log flush"):
+                await processor.flush()  # log rows land before the offsets move
             # At-least-once: handling is idempotent, so a replayed batch is a no-op.
             await consumer.commit()
     finally:
