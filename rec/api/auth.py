@@ -4,16 +4,19 @@ Two ways in:
 - Browser: the BFF session cookie (SDD 13.4). Opaque id, state in Redis, HttpOnly, and
   every mutation must echo the session's CSRF token in `X-CSRF-Token`.
 - Machines/customers: `Authorization: Bearer`. Static admin tokens are honoured only in
-  DEV_ENVIRONMENTS; customer tokens are the mobile-app stand-in.
+  DEV_ENVIRONMENTS. Customers present the mobile channel's OIDC access token, verified
+  against the customer IdP (S-2, ADR-0013); `cust-<id>` is a dev-only stand-in.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import secrets
 import time
 from dataclasses import dataclass
 
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 
 from rec.settings import DEV_ENVIRONMENTS, settings
@@ -133,6 +136,37 @@ async def _from_session(request: Request, sid: str) -> Principal:
     return Principal(data["subject"], data["role"], "admin", sid, data["csrf"])
 
 
+# Asymmetric only: an HMAC algorithm would let the IdP's public key sign tokens.
+CUSTOMER_JWT_ALGORITHMS = ["RS256", "ES256"]
+_jwks: jwt.PyJWKClient | None = None
+
+
+async def _customer_from_jwt(token: str) -> str | None:
+    """The customerId a valid customer IdP token names, else None (S-2).
+
+    Signature against the IdP's published keys, then issuer, audience, expiry and
+    not-before, with 30 s of clock leeway. Unconfigured means no customer gets in.
+    """
+    global _jwks
+    if not (settings.customer_jwks_url and settings.customer_jwt_issuer
+            and settings.customer_jwt_audience):
+        return None
+    if _jwks is None:  # keys are cached; an unknown kid refetches them (key rotation)
+        _jwks = jwt.PyJWKClient(settings.customer_jwks_url, cache_keys=True, lifespan=3600)
+    claim = settings.customer_id_claim
+    try:
+        # PyJWKClient fetches over blocking urllib when its cache misses
+        key = await asyncio.to_thread(_jwks.get_signing_key_from_jwt, token)
+        claims = jwt.decode(token, key.key, algorithms=CUSTOMER_JWT_ALGORITHMS,
+                            issuer=settings.customer_jwt_issuer,
+                            audience=settings.customer_jwt_audience, leeway=30,
+                            options={"require": ["exp", "iss", "aud", claim]})
+    except jwt.PyJWTError:
+        return None
+    subject = claims.get(claim)
+    return subject if isinstance(subject, str) and subject else None
+
+
 async def principal(request: Request) -> Principal:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
@@ -145,11 +179,14 @@ async def principal(request: Request) -> Principal:
     if token in admins:
         subject, role = admins[token]
         return Principal(subject, role, "admin")
-    # The cust-<id> scheme is a forgeable stand-in for the mobile channel's auth: it
-    # fails closed outside dev until real channel tokens are verified here.
+    # The cust-<id> scheme is a forgeable stand-in for the mobile channel's token and
+    # works only in dev environments.
     if (token.startswith(settings.customer_token_prefix)
             and settings.environment in DEV_ENVIRONMENTS):
         return Principal(token[len(settings.customer_token_prefix):], "Customer", "customer")
+    customer_id = await _customer_from_jwt(token)
+    if customer_id is not None:
+        return Principal(customer_id, "Customer", "customer")
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid token")
 
 

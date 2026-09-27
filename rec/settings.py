@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     oidc_client_secret: str = ""
     oidc_redirect_uri: str = "http://localhost:5173/bff/callback"
     oidc_roles_claim: str = "roles"
+    # Customer channel (S-2, ADR-0013): the mobile app's OIDC access token, a JWT verified
+    # against the customer IdP's keys. All three empty = customer tokens refused.
+    customer_jwks_url: str = ""
+    customer_jwt_issuer: str = ""
+    customer_jwt_audience: str = ""
+    customer_id_claim: str = "sub"  # the claim that holds our customerId
 
     # Canary guardrail (SDD 17.2 step 14): automatic rollback when the live model misbehaves.
     guardrail_interval_seconds: int = 30

@@ -22,6 +22,8 @@ dependencies = [
   # exact: rec/ml/bandit.py serialises river's private model state (round-trip tested)
   "river==0.26.1",
   "optuna>=4.0",
+  # S-2: customer access tokens are verified against the IdP's JWKS (ADR-0013)
+  "PyJWT[crypto]>=2.10",
 ]
 
 [project.optional-dependencies]

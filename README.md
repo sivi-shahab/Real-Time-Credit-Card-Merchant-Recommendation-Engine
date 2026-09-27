@@ -113,7 +113,8 @@ CSRF token. SSO users (Keycloak, one per role): `viewer`, `analyst`, `marketing`
 Demo bearer tokens work only when `ENVIRONMENT` is local/test/ci, for scripts and the
 local "demo token" login: `admin-token` (Platform Operator), `analyst-token`,
 `ops-token` (Marketing Operator), `auditor-token`, `ml-token` (ML Engineer),
-`approver-token`, `viewer-token`. A customer token is `cust-<customerId>`. Roles matter:
+`approver-token`, `viewer-token`. A customer token is `cust-<customerId>` locally; in
+production it is the mobile channel's OIDC access token (ADR-0013). Roles matter:
 an ML Engineer can train but not promote, an Approver can promote but not train, and an
 erasure is filed by one person and approved by another (SEC-001).
 
@@ -310,9 +311,11 @@ The full list with evidence and sign-off is [docs/release-gate.md](docs/release-
 threats are ranked in [docs/threat-model.md](docs/threat-model.md). The ones that matter
 most:
 
-0. **The customer API has no production authentication.** `cust-<id>` tokens are a
-   forgeable stand-in and are refused outside local/test/ci; verifying the mobile
-   channel's real tokens is not built (threat S-2).
+0. **Customer IdP not yet configured.** The customer API verifies the mobile channel's
+   OIDC access token against the IdP's JWKS ([ADR-0013](docs/adr/0013-customer-channel-tokens.md));
+   the mobile platform still has to confirm the token profile, and until
+   `CUSTOMER_JWKS_URL` / `CUSTOMER_JWT_ISSUER` / `CUSTOMER_JWT_AUDIENCE` are set no customer
+   token is accepted outside local/test/ci (threat S-2).
 1. **Ingestion throughput is unproven.** ~210 events/s per consumer on this host against
    the 10 000 TPS target. Fase 5 removed the Postgres ceiling (one fsync per event → one
    transaction per consumer batch); what remains is ~6 Redis round trips per event, on a

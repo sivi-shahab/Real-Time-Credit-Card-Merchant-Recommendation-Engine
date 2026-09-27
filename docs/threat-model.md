@@ -41,7 +41,7 @@ fraud detection.
 | ID | Threat | Boundary | Control | Evidence | Status |
 |---|---|---|---|---|---|
 | S-1 | Staff impersonation, stolen or replayed session | B2 | OIDC code + PKCE; opaque `HttpOnly` cookie; 30 min idle / 8 h absolute; logout deletes the session server-side; static tokens only in local/test/ci | `test_session_cookie_is_httponly_and_carries_no_token`, `test_logout_kills_the_session_server_side`, `test_static_tokens_are_dead_outside_dev` | Mitigated |
-| S-2 | Forged customer identity: `cust-<id>` is guessable | B1 | Fails closed outside dev environments. Real channel token verification (the mobile platform's JWT/mTLS) is **not built**, so the customer API has no production auth yet | `test_static_tokens_are_dead_outside_dev` | Open |
+| S-2 | Forged customer identity: `cust-<id>` is guessable | B1 | The mobile channel's OIDC access token is verified against the customer IdP's JWKS: RS256/ES256 only, issuer, audience, expiry, not-before; the customerId comes from one configured claim and `customer_self` limits the token to it (ADR-0013). Unconfigured = refused; `cust-<id>` only in dev. Residual: the mobile platform has to confirm the token profile; revocation waits for `exp` | `test_only_a_valid_token_from_the_customer_idp_signs_a_customer_in`, `test_static_tokens_are_dead_outside_dev` | Mitigated (pending IdP configuration) |
 | S-3 | Anyone who can reach Kafka publishes fake transactions | B3 | Schema + reference validation and quarantine limit the damage, but they do not authenticate the producer. Needs SASL/mTLS and per-topic ACLs (produce on `cc.transactions` = ingestion only) | `test_pipeline_applies_and_quarantines_per_spec` | Open |
 | S-4 | Substituted or replayed id_token at login | B2 | Single-use state (10 min), nonce, issuer, audience, expiry checked. Signature not verified — relies on the TLS back channel (ADR-0006) | `test_oidc_rejects_wrong_nonce_audience_or_role_set` | Partial |
 | S-5 | A genuine customer fabricates feedback: impressions with any `requestId`, merchant or position, and clicks on them | B1 | Every served response is recorded per customer (Redis, 24 h). An impression must name a response this customer received, a merchant in it and the position it held; the served model version is stored, not the client's; items are typed, at most 20. A click must name this customer's own impression of that merchant. Unverifiable feedback (Redis down) is refused. Residual: clicks on items that really were shown cannot be proven real, and there is no per-customer rate limit (D-1) | `test_feedback_must_match_a_slate_that_was_served`, `test_feedback_is_accepted_only_from_the_customer_it_describes` | Partial |
@@ -109,14 +109,12 @@ fraud detection.
 
 ## Top open risks, in order
 
-1. **S-2** — the customer API has no production authentication. Nothing customer-facing
-   can go live until channel tokens are verified.
-2. **S-3 / I-6 / T-6 / I-5** — no transport security or service authentication on
+1. **S-3 / I-6 / T-6 / I-5** — no transport security or service authentication on
    Kafka, Redis and internal HTTP services. Mostly platform configuration.
-3. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
+2. **S-5 / T-10 / I-9** — feedback is bound to what was served, but a customer can still
    report clicks they never made and nothing rate-limits them; retained training exports
    keep erased customers until they age out. (Learning switches now need an Approver.) Keep
    `AUTO_RETRAIN_INTERVAL_HOURS=0` and `PROMO_HOLDOUT_PERCENT=0` until these are closed.
-4. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
+3. **D-1 / D-5** — no rate limiting at the edge, and an unauthenticated internal endpoint
    that can exhaust ranking memory.
-5. **E-4 / T-1** — the app's database role can undo the audit protection.
+4. **E-4 / T-1** — the app's database role can undo the audit protection.
