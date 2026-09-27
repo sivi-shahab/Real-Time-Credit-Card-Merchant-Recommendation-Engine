@@ -23,13 +23,14 @@ from pydantic import BaseModel, Field
 
 from rec.ml.vectorize import FEATURE_NAMES
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
-from rec.obs import INFERENCE_LATENCY, setup_logging
+from rec.obs import INFERENCE_LATENCY, setup_logging, setup_tracing
 from rec.settings import DEV_ENVIRONMENTS, settings
 
 log = logging.getLogger("ranking")
 
 app = FastAPI(title="Ranking Service", version="1.0.0", openapi_version="3.1.0",
               on_startup=[setup_logging])
+setup_tracing("rec-ranking", app)
 
 
 # A model version becomes a file name: no separators, so no path traversal.

@@ -15,6 +15,7 @@ import asyncpg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from opentelemetry import trace
 from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, CollectorRegistry, generate_latest
 from prometheus_client.multiprocess import MultiProcessCollector
 from pydantic import BaseModel, Field
@@ -31,7 +32,14 @@ from rec.generator.config import DatasetConfig
 from rec.ml import bandit, guardrail, registry, uplift
 from rec.ml import client as ranking_client
 from rec.ml.vectorize import FEATURE_SCHEMA_VERSION as VECTOR_SCHEMA_VERSION
-from rec.obs import HTTP_LATENCY, HTTP_REQUESTS, LEARNING_SWITCH, setup_logging, trace_id_var
+from rec.obs import (
+    HTTP_LATENCY,
+    HTTP_REQUESTS,
+    LEARNING_SWITCH,
+    setup_logging,
+    setup_tracing,
+    trace_id_var,
+)
 from rec.settings import settings
 from rec.simulator.runner import InvalidTransition, manager
 from rec.store import pg
@@ -98,7 +106,14 @@ app.include_router(bff.router)
 
 @app.middleware("http")
 async def correlation(request: Request, call_next):
-    trace_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+    # With tracing on, the traceId in logs, errors and audit rows is the OpenTelemetry
+    # trace id, so any of them opens the whole request in the tracing UI.
+    span = trace.get_current_span()
+    context = span.get_span_context()
+    trace_id = request.headers.get("x-correlation-id") or (
+        format(context.trace_id, "032x") if context.is_valid else str(uuid.uuid4()))
+    if context.is_valid and trace_id != format(context.trace_id, "032x"):
+        span.set_attribute("correlation.id", trace_id)
     request.state.trace_id = trace_id
     trace_id_var.set(trace_id)
     t0 = time.perf_counter()
@@ -108,6 +123,9 @@ async def correlation(request: Request, call_next):
     HTTP_LATENCY.labels(route).observe(time.perf_counter() - t0)
     response.headers["x-correlation-id"] = trace_id
     return response
+
+
+setup_tracing("rec-api", app)  # after the middleware above, so its span encloses them
 
 
 @app.exception_handler(HTTPException)

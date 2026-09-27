@@ -14,6 +14,9 @@ x-backend-env: &backend_env
   RANKING_SERVICE_URL: http://ranking:8100
   # D-5: the API's credential at the ranking service; both read it from here
   RANKING_SERVICE_TOKEN: local-dev-ranking-token-change-me
+  # Traces from api and ranking (the others do not start tracing). Every request here;
+  # production samples 10% (docs/runbooks.md#tracing): tracing all cost ~30% throughput
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
   COOKIE_SECURE: "false"
   OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
@@ -163,6 +166,11 @@ services:
       KC_HEALTH_ENABLED: "true"
     ports: ["8180:8080"]
     volumes: ["./deploy/keycloak:/opt/keycloak/data/import:ro"]
+
+  # Trace store and UI for the local stack (OTLP in on 4318); in-memory, restarts empty.
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    ports: ["16686:16686", "4318:4318"]
 
   prometheus:
     image: prom/prometheus:v2.55.1

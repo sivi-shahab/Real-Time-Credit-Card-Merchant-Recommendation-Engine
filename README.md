@@ -107,6 +107,7 @@ audit trail (threat E-4). Scripts run from the host with `.env` still use the ow
 | Prometheus| http://localhost:9090        | scrapes api, ranking, stream; alert rules loaded |
 | Ranking   | http://localhost:8100        | batch inference, `/health` lists loaded models |
 | MLflow    | http://localhost:5000        | runs, metrics, artifacts, model registry |
+| Jaeger    | http://localhost:16686       | traces from api and ranking; search a `traceId` |
 
 **Signing in.** The browser only ever holds an opaque `HttpOnly` session cookie issued by
 the BFF (`/bff/*`, [ADR-0006](docs/adr/0006-bff-session-and-oidc.md)); mutations carry a
@@ -170,7 +171,7 @@ rec/simulator/     SIM-001..003 replay with rate control and checkpoints
 rec/store/         Redis online store, Postgres master data
 dashboard/         Vue 3 + TS console (10 views)
 contracts/         frozen openapi.json, asyncapi.yaml, avro/*.avsc (event contracts)
-rec/obs.py         JSON logs with trace ids + redaction, Prometheus metrics
+rec/obs.py         JSON logs with trace ids + redaction, Prometheus metrics, OTel traces
 scripts/           reconcile.py (AC-008), smoke/chaos/DR drills, backup.sh,
                    rebuild_state.py, loadtest.py, export_openapi.py
 deploy/            Keycloak realm, Prometheus scrape config + alert rules
@@ -298,8 +299,6 @@ it downgrades xgboost) on the same splits; they are challengers, not serving can
   plaintext; `docs/runbooks.md` lists what production must set.
 - **Machine-to-machine admin credentials.** Scripts use static tokens, which only work in
   local/test/ci. Production automation needs OIDC client credentials.
-- **Distributed tracing.** A `traceId` joins errors, logs and audit rows, but there is no
-  OpenTelemetry span propagation across api → ranking.
 - **Acting on what the learners find.** Live feedback retrains the model and the promo
   holdout feeds an uplift estimate, but a model past SHADOW still needs an Approver, the
   online bandit never serves, and no offer is withheld on the strength of an uplift score:

@@ -38,8 +38,22 @@ More than 5% of responses are `FALLBACK`.
 - Otherwise the feature store or catalog is failing (`recommend_safe` fallback): see
   [redis-loss](#redis-loss).
 
-## api-errors
-5xx rate > 1%. Take a `traceId` from a failing response and grep the API logs for it; the
+## tracing
+Every error body, `x-correlation-id` header, log line and audit row carries a `traceId`:
+with tracing on it is the OpenTelemetry trace id, so it opens the request in the tracing
+UI (locally Jaeger, http://localhost:16686, or `GET /api/traces/<traceId>`). A client that
+sends its own `x-correlation-id` keeps it; it is then the span attribute `correlation.id`.
+- On when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (api and ranking). Production: sample with
+  `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1`;
+  tracing every request cost about 30% of API throughput on the load-test host.
+- Spans carry SQL text and Redis command names only, never the values bound to them.
+  Paths include the customer id, as the access logs do.
+- A trace store outage loses spans, not requests: export is batched and in the
+  background.
+
+
+5xx rate > 1%. Take a `traceId` from a failing response, open it in the tracing UI (see
+[tracing](#tracing)) or grep the API logs for it; the
 log line carries the exception. Postgres down is the usual cause of 5xx: serving itself
 returns an empty FALLBACK list rather than erroring, but admin endpoints need Postgres.
 

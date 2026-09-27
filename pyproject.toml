@@ -24,6 +24,13 @@ dependencies = [
   "optuna>=4.0",
   # S-2: customer access tokens are verified against the IdP's JWKS (ADR-0013)
   "PyJWT[crypto]>=2.10",
+  # Distributed tracing, exported over OTLP when OTEL_EXPORTER_OTLP_ENDPOINT is set
+  "opentelemetry-sdk>=1.30",
+  "opentelemetry-exporter-otlp-proto-http>=1.30",
+  "opentelemetry-instrumentation-fastapi>=0.51b0",
+  "opentelemetry-instrumentation-httpx>=0.51b0",
+  "opentelemetry-instrumentation-asyncpg>=0.51b0",
+  "opentelemetry-instrumentation-redis>=0.51b0",
 ]
 
 [project.optional-dependencies]

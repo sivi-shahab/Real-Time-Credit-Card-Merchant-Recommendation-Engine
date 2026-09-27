@@ -1,5 +1,5 @@
 """Observability shared by api, ranking and stream: JSON logs with trace ids and
-redaction (SEC-002), plus Prometheus metrics.
+redaction (SEC-002), Prometheus metrics, and OpenTelemetry traces for api and ranking.
 
 Redaction is a last line of defence; code should not log credentials in the first place.
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextvars
 import json
 import logging
+import os
 import re
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -56,6 +57,43 @@ def setup_logging(level: int = logging.INFO) -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
+
+
+def instrument(app=None) -> None:
+    """Spans for inbound requests (FastAPI), calls out (httpx: api -> ranking, with W3C
+    `traceparent`), Postgres (asyncpg: statements, never parameters) and Redis (command
+    names only; keys and values are replaced with `?`, so no session ids)."""
+    from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.redis import RedisInstrumentor
+
+    if app is not None:
+        FastAPIInstrumentor.instrument_app(app, excluded_urls="health,metrics")
+    for instrumentor in (HTTPXClientInstrumentor(), AsyncPGInstrumentor(),
+                         RedisInstrumentor()):
+        if not instrumentor.is_instrumented_by_opentelemetry:
+            instrumentor.instrument()
+
+
+def setup_tracing(service: str, app=None) -> bool:
+    """OpenTelemetry, only when OTEL_EXPORTER_OTLP_ENDPOINT is set; otherwise nothing is
+    installed and nothing costs anything. Everything else comes from the standard OTEL_*
+    variables (OTEL_SERVICE_NAME, OTEL_TRACES_SAMPLER, ...)."""
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return False
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    provider = TracerProvider(resource=Resource.create(
+        {"service.name": os.environ.get("OTEL_SERVICE_NAME", service)}))
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(provider)
+    instrument(app)
+    return True
 
 
 # ------------------------------------------------------------------ metrics
