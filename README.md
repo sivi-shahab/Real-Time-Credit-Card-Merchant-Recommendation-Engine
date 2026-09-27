@@ -87,6 +87,17 @@ editing the spec, re-run `deliver` and re-export the SVG from the viewer's Expor
 · spec: [erasure-request.sequence.json](docs/architecture/erasure-request.sequence.json)
 </details>
 
+## Write-ups
+
+| Document | For | Link |
+|---|---|---|
+| Artikel proyek: tujuan, arsitektur, ML, keamanan, kinerja, hasil | everyone | [claude.ai/artifact/F4Qc8S3y5r8UL5qaSu9Cbc](https://claude.ai/artifact/F4Qc8S3y5r8UL5qaSu9Cbc) |
+| Rencana Scale-out Ingestion (ADR-0014 summary) | platform team | [claude.ai/artifact/3rfLeszyv9hh1jSwSFScWR](https://claude.ai/artifact/3rfLeszyv9hh1jSwSFScWR) |
+| Integrasi Aplikasi Mobile (ADR-0013 summary) | mobile team | [claude.ai/artifact/8umSLtox2EFcUFQLMAEiVR](https://claude.ai/artifact/8umSLtox2EFcUFQLMAEiVR) |
+
+These pages are private: a reader needs access shared by the owner (the page's Share
+menu). The repository documents they summarise stay the source of truth.
+
 ## Run it
 
 ```bash
