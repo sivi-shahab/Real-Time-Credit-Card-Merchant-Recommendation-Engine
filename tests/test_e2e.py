@@ -1325,11 +1325,15 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
 
 
 async def test_redis_state_rebuilds_exactly_from_postgres(replayed):
-    """SDD 16 recovery: lose Redis entirely, rebuild from the log, get identical features."""
+    """SDD 16 recovery: lose Redis entirely, rebuild from the log, get identical features.
+    The log holds quarantined messages of any shape; the rebuild must get past them."""
     import subprocess
     import sys
 
     conn = await pg.pool()
+    await pg.log_transactions([pg.transaction_row(
+        {"eventId": "rebuild-poison", "payload": "not an object"}, "QUARANTINED",
+        "SCHEMA_INVALID", "test")])
     ids = [r["customer_id"] for r in await conn.fetch(
         """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
            GROUP BY customer_id ORDER BY count(*) DESC LIMIT 20""")]

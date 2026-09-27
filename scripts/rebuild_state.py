@@ -42,8 +42,12 @@ async def main(flush: bool, now: datetime | None) -> None:
         by_customer: dict[str, list[dict]] = {}
         for row in rows:
             raw = json.loads(row["envelope"])
-            by_customer.setdefault(str((raw.get("payload") or {}).get("customerId")),
-                                   []).append(raw)
+            if not isinstance(raw, dict):
+                continue
+            # quarantined rows can hold any payload at all (D-4)
+            payload = raw.get("payload")
+            customer = payload.get("customerId") if isinstance(payload, dict) else None
+            by_customer.setdefault(str(customer), []).append(raw)
 
         async def drain(events: list[dict]) -> None:
             async with gate:
