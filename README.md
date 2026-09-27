@@ -316,15 +316,15 @@ most:
    the mobile platform still has to confirm the token profile, and until
    `CUSTOMER_JWKS_URL` / `CUSTOMER_JWT_ISSUER` / `CUSTOMER_JWT_AUDIENCE` are set no customer
    token is accepted outside local/test/ci (threat S-2).
-1. **Ingestion throughput is unproven.** ~210 events/s per consumer on this host against
-   the 10 000 TPS target. Fase 5 removed the Postgres ceiling (one fsync per event → one
-   transaction per consumer batch); what remains is ~6 Redis round trips per event, on a
-   host where Redis itself benchmarks at ~10k ops/s. The design scales by partition (6)
-   and consumer replicas; that needs a load test on representative hardware.
-2. **API latency holds only at low concurrency here.** 8 clients: p95 72 ms at 162 rps.
-   32 clients: p95 ~1 s — one uvicorn worker plus the load generator on the same WSL host.
-   The customer API should run as its own horizontally scaled deployment; the admin API
-   cannot simply add workers because the simulator keeps run state in-process.
+1. **Ingestion throughput is unproven.** ~220 events/s per consumer process on this host
+   against the 10 000 TPS target. The consumer is CPU-bound in Python (asyncio and the
+   Redis client), not waiting on Redis: two round trips per event now. The design scales by
+   partition and consumer replica, about 45 of each at today's rate (the local topic has
+   6); that needs a load test on representative hardware.
+2. **API latency proven on one host only.** 32 clients, 8 uvicorn workers: p95 101–168 ms
+   cached, 145–173 ms with every request a cache miss. Simulator commands reach whichever
+   worker is replaying through the run's status in Postgres, so the admin API runs the
+   same workers.
 3. **id_token signature is not verified.** Safe only because it comes straight from the
    token endpoint over the back channel, and only if that channel is TLS in production
    (ADR-0006).

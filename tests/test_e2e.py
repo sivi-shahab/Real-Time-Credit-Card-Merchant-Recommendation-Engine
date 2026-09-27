@@ -1458,3 +1458,64 @@ async def test_live_serving_sees_catalog_changes_made_any_way(client, replayed):
     finally:
         await conn.execute("UPDATE promotions SET quota_used = 0 WHERE merchant_id=$1",
                            promoted.merchantId)
+
+
+async def test_simulator_commands_reach_a_replay_on_another_worker(client, dataset,
+                                                                  monkeypatch):
+    """With several API workers, pause/resume/stop can land on a worker that is not the
+    one replaying. Two managers stand in for two workers: every event still goes out once,
+    in order, and only one replay runs at a time."""
+    from rec.simulator import runner
+
+    sent: list[bytes] = []
+    live = {"now": 0, "max": 0}
+
+    class SlowProducer:
+        def __init__(self, **_kw):
+            pass
+
+        async def start(self):
+            live["now"] += 1
+            live["max"] = max(live["max"], live["now"])
+
+        async def stop(self):
+            live["now"] -= 1
+
+        async def send_and_wait(self, _topic, value, key=None):
+            await asyncio.sleep(0.002)
+            sent.append(value)
+
+    monkeypatch.setattr(runner, "AIOKafkaProducer", SlowProducer)
+    worker_a, worker_b = runner.SimulationManager(), runner.SimulationManager()
+    run = await worker_a.create("test-dataset", 5000)
+    rid = run["run_id"]
+
+    async def wait_for(manager, status):
+        for _ in range(200):
+            if (await manager.get(rid))["status"] == status and all(
+                    t.done() for t in [*worker_a.tasks.values(), *worker_b.tasks.values()]):
+                return
+            await asyncio.sleep(0.05)
+        raise AssertionError(f"never reached {status}")
+
+    await worker_a.command(rid, "start")
+    await asyncio.sleep(0.4)
+    await worker_b.command(rid, "pause")               # replay runs on A
+    await wait_for(worker_b, "PAUSED")
+    paused_at = len(sent)
+    assert 0 < paused_at == (await worker_b.get(rid))["offset_pos"]
+    await asyncio.sleep(0.3)
+    assert len(sent) == paused_at, "a pause sent to B stopped the replay on A"
+
+    await worker_b.command(rid, "resume")               # now replays on B
+    await asyncio.sleep(0.2)
+    await worker_a.command(rid, "pause")                # back to back: B may still be
+    await worker_a.command(rid, "resume")               # replaying when A starts one
+    for _ in range(300):
+        if (await worker_a.get(rid))["status"] == "COMPLETED":
+            break
+        await asyncio.sleep(0.05)
+    assert (await worker_a.get(rid))["status"] == "COMPLETED"
+    replay = (dataset[0] / "replay.jsonl").read_text().splitlines()
+    assert [v.decode().rstrip("\n") for v in sent] == replay, "every event once, in order"
+    assert live["max"] == 1

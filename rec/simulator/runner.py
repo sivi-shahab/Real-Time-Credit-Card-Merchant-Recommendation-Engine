@@ -2,6 +2,11 @@
 
 State machine: CREATED -> RUNNING <-> PAUSED -> COMPLETED | STOPPED | FAILED.
 Invalid commands for the current status are rejected here, not in the UI.
+
+The API runs several workers, so a command can land on a worker other than the one
+replaying. Commands therefore travel through the run's status in Postgres, which the
+replay polls; pause ends the replay at a checkpoint and resume, on any worker, starts a
+new one from it. A Redis lock keeps one replay per run.
 """
 from __future__ import annotations
 
@@ -15,6 +20,7 @@ from aiokafka import AIOKafkaProducer
 
 from rec.settings import settings
 from rec.store import pg
+from rec.store.redis_store import _client
 
 TRANSITIONS = {
     "CREATED": {"RUNNING", "STOPPED"},
@@ -26,6 +32,8 @@ TRANSITIONS = {
 }
 SEND_ATTEMPTS = 5
 COMMAND_TARGET = {"start": "RUNNING", "pause": "PAUSED", "resume": "RUNNING", "stop": "STOPPED"}
+STATUS_POLL_SECONDS = 0.25
+LOCK_TTL_SECONDS = 5  # a crashed replay frees its run this long after its last poll
 
 
 class InvalidTransition(Exception):
@@ -33,11 +41,16 @@ class InvalidTransition(Exception):
 
 
 class SimulationManager:
-    """Runs replays as asyncio tasks in-process. One task per runId."""
+    """Runs replays as asyncio tasks, at most one per runId across all API workers."""
 
     def __init__(self):
         self.tasks: dict[str, asyncio.Task] = {}
-        self.commands: dict[str, str] = {}
+        self._redis = None
+
+    def redis(self):
+        if self._redis is None:
+            self._redis = _client()
+        return self._redis
 
     def _dataset_path(self, dataset_id: str) -> Path:
         return Path(settings.data_dir) / dataset_id / "replay.jsonl"
@@ -83,14 +96,10 @@ class SimulationManager:
         target = COMMAND_TARGET[command]
         if target not in TRANSITIONS[run["status"]]:
             raise InvalidTransition(f"{command} invalid from {run['status']}")
-        if command in ("start", "resume"):
-            await self._set_status(run_id, "RUNNING")
-            self.commands[run_id] = "run"
-            if run_id not in self.tasks or self.tasks[run_id].done():
-                self.tasks[run_id] = asyncio.create_task(self._replay(run_id))
-        else:
-            self.commands[run_id] = "pause" if command == "pause" else "stop"
-            await self._set_status(run_id, target)
+        await self._set_status(run_id, target)
+        if command in ("start", "resume") and (
+                run_id not in self.tasks or self.tasks[run_id].done()):
+            self.tasks[run_id] = asyncio.create_task(self._replay(run_id))
         return await self.get(run_id)
 
     async def _set_status(self, run_id: str, status: str) -> None:
@@ -100,7 +109,26 @@ class SimulationManager:
             run_id, status)
 
     async def _replay(self, run_id: str) -> None:
+        key, token = f"sim:run:{run_id}", str(uuid.uuid4())
+        # A paused replay on another worker may still be finishing its checkpoint.
+        for _ in range(int(LOCK_TTL_SECONDS * 2 / STATUS_POLL_SECONDS)):
+            if await self.redis().set(key, token, nx=True, ex=LOCK_TTL_SECONDS):
+                break
+            await asyncio.sleep(STATUS_POLL_SECONDS)
+        else:
+            return  # one is still replaying this run and saw the RUNNING status too
+        try:
+            await self._replay_locked(run_id, key, token)
+        finally:
+            # ponytail: get-then-delete is not atomic; a Lua compare-and-delete if the
+            # lock ever guards more than a dev simulator
+            if await self.redis().get(key) == token:
+                await self.redis().delete(key)
+
+    async def _replay_locked(self, run_id: str, key: str, token: str) -> None:
         run = await self.get(run_id)
+        if run["status"] != "RUNNING":
+            return
         path = self._dataset_path(run["dataset_id"])
         producer = AIOKafkaProducer(bootstrap_servers=settings.kafka_bootstrap,
                                     enable_idempotence=True, acks="all")
@@ -109,18 +137,19 @@ class SimulationManager:
         offset = run["offset_pos"]
         interval = 1.0 / max(1, run["target_tps"] * float(run["speed_multiplier"]))
         window_start, window_sent = time.perf_counter(), 0
+        polled = 0.0
         try:
             await producer.start()
             with path.open() as fh:
                 for index, line in enumerate(fh):
                     if index < offset:  # SIM-002: resume from checkpoint
                         continue
-                    cmd = self.commands.get(run_id, "run")
-                    while cmd == "pause":
-                        await asyncio.sleep(0.2)
-                        cmd = self.commands.get(run_id, "run")
-                    if cmd == "stop":
-                        return
+                    if time.perf_counter() - polled >= STATUS_POLL_SECONDS:
+                        if await p.fetchval("SELECT status FROM simulation_runs "
+                                            "WHERE run_id=$1", run_id) != "RUNNING":
+                            return  # PAUSED or STOPPED; the checkpoint is saved below
+                        await self.redis().expire(key, LOCK_TTL_SECONDS)
+                        polled = time.perf_counter()
                     envelope = json.loads(line)
                     # SIM-002: never skip an event. Retry with backoff; if the broker
                     # stays down, fail with the checkpoint still on this event.
