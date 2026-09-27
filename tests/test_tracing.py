@@ -57,6 +57,11 @@ server.should_exit = True
 """
 
 
+def _is_redis(span: dict) -> bool:
+    # the cluster client's spans are named "redis" and carry no db.system or command
+    return span["attrs"].get("db.system") == "redis" or span["name"] == "redis"
+
+
 def test_one_trace_spans_api_and_ranking_and_carries_no_values():
     env = os.environ | {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
                         "OTEL_BSP_SCHEDULE_DELAY": "60000"}
@@ -80,11 +85,11 @@ def test_one_trace_spans_api_and_ranking_and_carries_no_values():
     names = " ".join(s["name"] for s in request_spans)
     assert "GET /api/v1/customer/{customer_id}/recommendations" in names, names
     assert any(s["attrs"].get("db.system") == "postgresql" for s in request_spans)
-    assert any(s["attrs"].get("db.system") == "redis" for s in request_spans)
+    assert any(_is_redis(s) for s in request_spans)
 
     # statements and commands, never the values bound into them
     for s in out["spans"]:
-        if s["attrs"].get("db.system") in ("postgresql", "redis"):
+        if s["attrs"].get("db.system") == "postgresql" or _is_redis(s):
             flat = json.dumps(s["attrs"])
             assert "C0000001" not in flat and "sess:" not in flat, s
 
@@ -169,8 +174,7 @@ def test_a_trace_crosses_kafka_from_the_simulator_into_the_stream():
                         if p["attrs"]["messaging.message.id"] ==
                         span["attrs"]["messaging.message.id"])
         assert span["trace"] == producer["trace"] and span["parent"]
-        assert any(s["trace"] == span["trace"] and s["attrs"].get("db.system") == "redis"
-                   for s in spans)
+        assert any(s["trace"] == span["trace"] and _is_redis(s) for s in spans)
     # an untraced message starts a trace of its own
     assert not processed[5]["parent"]
     # what the stream sends on (here the rejected event to the DLQ) carries the trace on

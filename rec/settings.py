@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     stream_group_id: str = "feature-engine"
     stream_metrics_port: int = 9102
     redis_max_connections: int = 64
+    # ADR-0014: REDIS_URL names any cluster node; keys are hash-tagged per customer.
+    redis_cluster: bool = False
     pg_max_connections: int = 20
     # Apply db/schema.sql at startup (dev: the app role owns the schema). Production sets
     # false and runs `python -m rec.store.pg` as the owner before deploying (E-4).

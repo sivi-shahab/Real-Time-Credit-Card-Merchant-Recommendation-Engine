@@ -55,6 +55,8 @@ sends its own `x-correlation-id` keeps it; it is then the span attribute `correl
   `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1`;
   tracing every request cost about 30% of API throughput on the load-test host.
 - Spans carry SQL text and Redis command names only, never the values bound to them.
+  With `REDIS_CLUSTER=true` the instrumentation's Redis spans are named `redis` and carry
+  no command name: timing only.
   Paths include the customer id, as the access logs do.
 - A trace store outage loses spans, not requests: export is batched and in the
   background.
@@ -171,6 +173,10 @@ docker compose exec api python scripts/rebuild_state.py --flush
 ```
 The rebuild replays every logged envelope in original order through the same processor and
 re-applies erasure tombstones first. Tested: `test_redis_state_rebuilds_exactly_from_postgres`.
+The same rebuild migrates Redis to a new key layout (ADR-0014 changed it: deploy, then
+rebuild once with `--flush`). For Redis Cluster set `REDIS_CLUSTER=true` and point
+`REDIS_URL` at any node; every per-customer key is hash-tagged `{customerId}`, so a
+customer's state, ledger, cache and tombstone live in one slot.
 Until the rebuild runs, the stream still refuses erased customers: an unknown customer id
 is checked against the Postgres tombstones before anything is logged.
 

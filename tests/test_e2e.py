@@ -21,6 +21,7 @@ from rec.generator.config import DatasetConfig
 from rec.generator.generate import generate
 from rec.settings import settings
 from rec.store import pg
+from rec.store.redis_store import state_key
 from rec.stream.processor import FeatureProcessor
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -1281,7 +1282,7 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
     cid = await conn.fetchval(
         """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
            GROUP BY customer_id ORDER BY count(*) DESC LIMIT 1""")
-    assert await store.r.exists(f"state:{cid}")
+    assert await store.r.exists(state_key(cid))
     from rec.ml import bandit
     await conn.execute("""INSERT INTO promo_experiment (customer_id, arm, holdout_percent)
                           VALUES ($1, 'TREATMENT', 10) ON CONFLICT DO NOTHING""", cid)
@@ -1312,7 +1313,7 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
             processor_outcome = await processor.handle(raw, now=REF + timedelta(hours=2))
             outcomes.add(processor_outcome)
     assert outcomes == {"ERASED_CUSTOMER"}
-    assert not await store.r.exists(f"state:{cid}")
+    assert not await store.r.exists(state_key(cid))
     assert await conn.fetchval("SELECT count(*) FROM transaction_log WHERE customer_id=$1",
                                cid) == 0
     # master-data reload does not resurrect the profile either
@@ -1347,7 +1348,7 @@ async def test_redis_state_rebuilds_exactly_from_postgres(replayed):
         for key in ("transactionCount90d", "netSpend90d", "categoryInterest"):
             assert before[cid][key] == after[cid][key], (cid, key)
     for cid in erased:
-        assert not await store.r.exists(f"state:{cid}"), "rebuild resurrected an erased customer"
+        assert not await store.r.exists(state_key(cid)), "rebuild resurrected an erased customer"
 
 
 async def test_simulator_never_skips_an_event_when_the_broker_fails(client, dataset,
@@ -1581,3 +1582,34 @@ async def test_malformed_messages_are_quarantined_not_poison(replayed):
         """SELECT count(*) FROM transaction_log WHERE outcome = 'QUARANTINED'
              AND (event_id LIKE 'poison-%' OR event_id LIKE 'invalid:%' OR event_id = '42')""")
     assert logged >= len(poison)
+
+
+async def test_feature_updates_are_one_per_customer_per_batch(replayed):
+    """ADR-0014: a batch sends each customer's latest feature version once, not an update
+    per event; nothing is sent before the batch is flushed."""
+    import uuid
+
+    sent = []
+
+    class Capture:
+        async def send(self, topic, value, key=None, headers=None):
+            sent.append((topic, json.loads(value)))
+
+        send_and_wait = send
+
+    lines = (replayed[0] / "replay.jsonl").read_text().splitlines()
+    purchase = next(json.loads(x) for x in lines
+                    if json.loads(x)["injectedFault"] is None
+                    and json.loads(x)["payload"]["transactionType"] == "PURCHASE")
+    processor = FeatureProcessor(store, Capture(), batch=True)
+    for _ in range(3):
+        event = json.loads(json.dumps(purchase))
+        event["eventId"] = str(uuid.uuid4())
+        event["payload"]["transactionId"] = str(uuid.uuid4())
+        assert await processor.handle(event, now=REF + timedelta(hours=1)) == "APPLIED"
+    assert not [t for t, _ in sent if t == settings.topic_features]
+    await processor.flush()
+    updates = [m for t, m in sent if t == settings.topic_features]
+    assert len(updates) == 1
+    state = await store.load(purchase["payload"]["customerId"])
+    assert updates[0]["featureVersion"] == state.featureVersion

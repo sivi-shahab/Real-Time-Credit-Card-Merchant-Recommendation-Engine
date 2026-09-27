@@ -1,7 +1,8 @@
 # ADR-0014 — Scaling ingestion out to 10 000 / 20 000 events per second
 
-**Status:** Proposed · 2026-09-27 (sizing from local measurements; to be confirmed on
-representative hardware with `scripts/loadtest.py kafka`)
+**Status:** Accepted · 2026-09-27. Decisions 3, 4 and 6 are built; 1, 2 and 5 are
+platform sizing, to be confirmed on representative hardware with
+`scripts/loadtest.py kafka`.
 
 ## Context
 The target is 10 000 transactions/s steady and 20 000/s burst. One consumer process
@@ -42,18 +43,21 @@ slower than the one before; the tool spreads copies over distinct customers.)
    handling is idempotent, so a rebalance costs time, not correctness. Size steady state at
    ~50 consumers, burst at 96. Autoscale on consumer lag (`kafka_consumergroup_lag`), not CPU.
 3. **Take the transaction ledger out of the per-event read** before adding Redis capacity.
-   Move `t:<txnId>` records from `state:<customer>` to their own hash `txn:{<customer>}`
-   and read only the ids an event names (its own for the duplicate check, the original
-   for a refund or reversal) with `HMGET` in the admission pipeline. The per-event
-   `HGETALL` then covers buckets and hours only (bounded by the 90-day window). Expected:
-   at least half of Redis's per-event CPU here, far more for active cards.
+   `t:<txnId>` records moved from `state:<customer>` to hashes per month of the
+   transaction day, `txn:{<customer>}:<YYYY-MM>`. An event reads only the ids it names
+   (its own for the duplicate check, the original for a refund or reversal) with `HMGET`
+   over the at most 7 months still in retention, in the admission pipeline; records past
+   180 days are ignored exactly as the prune did, and each month's hash expires on its own
+   (`EXPIREAT`, no per-field TTL, so no Redis 7.4 requirement). The per-event `HGETALL`
+   now covers buckets and hours only.
 4. **Redis Cluster, keys hash-tagged by customer.** Even after 3, one Redis command thread
    will not carry 10 000 events/s (here ~1 ms of Redis CPU per event). Every per-customer
-   key takes a `{customerId}` tag (`state:{C1}`, `txn:{C1}`, `recidx:{C1}`, the cache
-   keys) so the save transaction and the admission pipeline stay within one slot. Two
-   global keys must go: the `erased` set (every event checks it: one hot slot) becomes a
-   per-customer tombstone key `erased:{C1}`, and the metrics hash becomes per-consumer
-   counters summed at read. Start at 6 primaries (with 3) and resize with the measurement.
+   key takes a `{customerId}` tag (`state:{C1}`, `txn:{C1}:<month>`, `recidx:{C1}`,
+   `rec:{C1}|...`, `served:{C1}:...`) so the save transaction stays within one slot. The
+   `erased` set every event checked (one hot slot) became a per-customer tombstone
+   `erased:{C1}`. The `metrics` hash stays: the stream writes it once per batch per
+   consumer, not per event. `REDIS_CLUSTER=true` selects the cluster client. Start at 6
+   primaries (with 3) and resize with the measurement.
 5. **Postgres through PgBouncer** (transaction pooling): 96 consumers x 4 connections plus
    the API exceed `max_connections`. asyncpg then needs `statement_cache_size=0`. The
    batched `transaction_log` insert (one transaction per consumer batch) stays.
@@ -64,10 +68,17 @@ slower than the one before; the tool spreads copies over distinct customers.)
 ## Consequences
 - Throughput is then bounded by consumer CPU (~5 ms of Python per event, ~50 cores at
   10 000/s) and by how many Redis primaries are provisioned; both scale horizontally.
-- The ledger split (3), hash tags and tombstones (4) and coalescing (6) are code changes
-  in `rec/store/redis_store.py`, `rec/core/ledger.py` and `rec/stream/processor.py`, with a
-  one-off migration of existing Redis state (or a rebuild from Postgres with
-  `scripts/rebuild_state.py`, which already exists for Redis loss).
+- The key layout changed, so deploying it needs Redis rebuilt from Postgres once:
+  `python scripts/rebuild_state.py --flush` (the tool that already exists for Redis
+  loss). Old `state:<id>` keys are never read again; the flush removes them.
+- The whole test suite passes against a 3-primary Redis Cluster as well as a single Redis.
+- Measured after 3, 4 and 6, same benchmark: 1 consumer 278 → 346 events/s, 8 consumers
+  837 → 1 070 events/s; Redis CPU at 8 consumers ~125% → ~51%, `HGETALL` 106 → 17 µs a
+  call. Redis is no longer the limit here; the single local Kafka broker (~200% CPU) and
+  the consumers are, and both scale out.
+- redis-py 8.1 passes a cluster transaction's routing `keys` to response callbacks that do
+  not take it; `rec/store/redis_store.py` wraps the callbacks. Remove the wrapper once
+  redis-py fixes it.
 - A customer's events are sequential by design (ordering per customer). A single very
   active customer is therefore processed by one consumer; per-customer rate is far below
   any consumer's capacity, so this bounds latency for that customer, not throughput.

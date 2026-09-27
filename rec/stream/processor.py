@@ -41,6 +41,7 @@ class FeatureProcessor:
         self._known_customers: set[str] = set()
         self._log_rows: list[tuple] = []
         self._counts: Counter[str] = Counter()
+        self._feature_versions: dict[str, int] = {}  # customer -> latest, sent at flush
 
     async def handle(self, raw: dict, *, now: datetime | None = None) -> str:
         outcome = await self._handle(raw, now or datetime.now(UTC))
@@ -68,8 +69,11 @@ class FeatureProcessor:
         # exact; only the log outcome is off. Outbox table if that audit trail must be exact.
         rows, self._log_rows = self._log_rows, []
         counts, self._counts = self._counts, Counter()
+        versions, self._feature_versions = self._feature_versions, {}
         await pg.log_transactions(rows)
         await self.store.incr_metrics(counts)
+        for customer_id, version in versions.items():
+            await self._emit_feature_update(customer_id, version)
 
     def _log(self, raw: dict, outcome: str, code: str | None = None,
              detail: str | None = None) -> None:
@@ -87,9 +91,14 @@ class FeatureProcessor:
         # Known before claiming: a claim for an unknown customer would turn the DLQ replay
         # of that event, once the customer exists, into a DUPLICATE_EVENT.
         known = env is not None and await self._customer_known(env.payload["customerId"])
+        # The ledger records this event can touch: its own transaction (a replay is a
+        # duplicate) and the original a refund or reversal corrects (ADR-0014).
+        txn_ids = [] if env is None else [
+            t for t in (env.payload.get("transactionId"),
+                        env.payload.get("originalTransactionId")) if isinstance(t, str) and t]
         erased, claimed, state = await self.store.admit(
             raw_customer if isinstance(raw_customer, str) else None,
-            env.eventId if known else None)
+            env.eventId if known else None, txn_ids, as_of=now)
         # AC-009 before anything else, invalid events included: quarantining logs the
         # raw envelope, which would re-store the very data that was erased.
         if erased:
@@ -132,7 +141,9 @@ class FeatureProcessor:
         await self.store.save(state, now)  # also drops cached recommendations (SERV-004)
         self._log(raw, outcome)
         self._counts["events_applied" if outcome == "APPLIED" else "events_duplicate"] += 1
-        await self._emit_feature_update(customer_id, state.featureVersion)
+        # one feature update per customer per batch, its latest version (ADR-0014):
+        # consumers of the topic only need the newest
+        self._feature_versions[customer_id] = state.featureVersion
         return outcome
 
     async def _customer_known(self, customer_id: str) -> bool:
