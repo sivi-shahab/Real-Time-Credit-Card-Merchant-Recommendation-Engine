@@ -84,6 +84,17 @@ on the volume no longer matches the SHA-256 recorded at training (T-4). Treat it
 security incident: do not re-promote, keep the file for investigation, retrain.
 `ARTIFACT_DIGEST_MISSING`: the model was trained before digests were recorded; retrain it.
 
+## stream-scaling
+Consumers scale by partition within the `STREAM_GROUP_ID` group (ADR-0014): add consumer
+processes up to the partition count; each takes a share of partitions on rebalance, and a
+customer's events stay ordered. Watch consumer lag, not CPU. If adding consumers stops
+helping, check Redis CPU first (`INFO commandstats`: `hgetall`): it was the limit at ~830
+events/s on a single Redis. Several consumers on one host need distinct
+`STREAM_METRICS_PORT`s. Measure with
+`python scripts/loadtest.py kafka --topic <bench topic> --group <bench group> --copies 20
+--distinct-customers` against consumers writing to a benchmark database, never the live
+topic (the tool refuses it).
+
 ## quarantine
 More than 5% of events quarantined. `GET /admin/v1/metrics/overview` →
 `quarantineByReason`. Quarantined events are in `transaction_log` (outcome `QUARANTINED`)

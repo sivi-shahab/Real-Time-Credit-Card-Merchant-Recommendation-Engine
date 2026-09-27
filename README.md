@@ -323,11 +323,12 @@ most:
    the mobile platform still has to confirm the token profile, and until
    `CUSTOMER_JWKS_URL` / `CUSTOMER_JWT_ISSUER` / `CUSTOMER_JWT_AUDIENCE` are set no customer
    token is accepted outside local/test/ci (threat S-2).
-1. **Ingestion throughput is unproven.** ~220 events/s per consumer process on this host
-   against the 10 000 TPS target. The consumer is CPU-bound in Python (asyncio and the
-   Redis client), not waiting on Redis: two round trips per event now. The design scales by
-   partition and consumer replica, about 45 of each at today's rate (the local topic has
-   6); that needs a load test on representative hardware.
+1. **Ingestion throughput is unproven.** One consumer applies ~220–280 events/s; through
+   the broker 8 consumers reach ~830/s and then Redis saturates. The plan to 10 000 /
+   20 000 events/s is [ADR-0014](docs/adr/0014-ingestion-scale-out.md): 96 partitions,
+   a consumer per partition at peak, the transaction ledger out of the per-event read,
+   Redis Cluster with per-customer hash tags, PgBouncer. It needs code changes and a load
+   test on production-like hardware (`scripts/loadtest.py kafka`).
 2. **Latency proven on one host only.** 32 clients: p95 101–168 ms cached, 145–173 ms
    with every request a cache miss on the baseline, 376–419 ms with the model serving
    every request (target 500 ms). API and ranking each run 8 workers. Simulator commands

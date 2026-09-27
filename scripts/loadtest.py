@@ -4,8 +4,12 @@
             per-customer concurrency the Kafka consumer uses (broker excluded: this
             measures the feature engine + Redis + Postgres, which is where the ceiling was).
   api     — concurrent GETs against a running recommendation API.
+  kafka   — end to end through the broker (ADR-0014): publish copies of a dataset's replay
+            with fresh ids to a benchmark topic and time until the consumer group has
+            committed all of it. Start the consumers first, as many as you are measuring.
 
   python scripts/loadtest.py ingest --dataset test-dataset
+  python scripts/loadtest.py kafka --topic bench.tx --group bench --copies 10
   python scripts/loadtest.py api --base http://localhost:8000 --concurrency 32 --seconds 30
 """
 from __future__ import annotations
@@ -67,6 +71,92 @@ async def ingest(args) -> dict:
             "concurrency": settings.stream_concurrency}
 
 
+def replay_copies(lines: list[str], copies: int, run: str, distinct_customers: bool):
+    """`copies` passes over a replay with fresh event and transaction ids, so every event
+    is applied rather than de-duplicated; refunds and reversals point at their own copy's
+    original. With `distinct_customers`, copy c goes to customers `<id>~c`."""
+    for c in range(copies):
+        suffix = f"-{run}-{c}"
+        for line in lines:
+            env = json.loads(line)
+            env["eventId"] = str(env.get("eventId")) + suffix
+            payload = env.get("payload") or {}
+            for field in ("transactionId", "originalTransactionId"):
+                if payload.get(field):
+                    payload[field] += suffix
+            if distinct_customers and payload.get("customerId"):
+                payload["customerId"] += f"~{c}"  # the consumers' DB must hold these
+            yield env
+
+
+async def kafka(args) -> dict:
+    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+    from aiokafka.admin import AIOKafkaAdminClient
+
+    from rec.settings import settings
+
+    if args.topic == settings.topic_transactions:
+        raise SystemExit("benchmark into its own topic, consumed by a group writing to a "
+                         "benchmark database; never the live transactions topic")
+    lines = (Path(settings.data_dir) / args.dataset / "replay.jsonl").read_text().splitlines()
+    run = f"{random.getrandbits(32):08x}"
+
+    def copies():
+        return replay_copies(lines, args.copies, run, args.distinct_customers)
+
+    producer = AIOKafkaProducer(bootstrap_servers=args.bootstrap, linger_ms=20,
+                                max_batch_size=256 * 1024)
+    await producer.start()
+    started = time.perf_counter()
+    sent = 0
+    try:
+        pending = []
+        for env in copies():
+            customer = str((env.get("payload") or {}).get("customerId", ""))
+            pending.append(await producer.send(args.topic, json.dumps(env).encode(),
+                                               key=customer.encode()))
+            sent += 1
+        await asyncio.gather(*pending)
+    finally:
+        await producer.stop()
+    published = time.perf_counter() - started
+
+    probe = AIOKafkaConsumer(bootstrap_servers=args.bootstrap)
+    admin = AIOKafkaAdminClient(bootstrap_servers=args.bootstrap)
+    await probe.start()
+    await admin.start()
+    try:
+        ends = await probe.end_offsets(
+            [p for p in await _partitions(probe, args.topic)])
+        while True:
+            committed = await admin.list_consumer_group_offsets(args.group)
+            lag = sum(end - (committed[tp].offset if tp in committed else 0)
+                      for tp, end in ends.items())
+            if lag <= 0:
+                break
+            if time.perf_counter() - started > args.timeout:
+                raise SystemExit(f"timed out with lag {lag}")
+            await asyncio.sleep(0.2)
+    finally:
+        await probe.stop()
+        await admin.close()
+    elapsed = time.perf_counter() - started
+    return {"events": sent, "partitions": len(ends), "publishSeconds": round(published, 2),
+            "seconds": round(elapsed, 2), "eventsPerSecond": round(sent / elapsed, 1)}
+
+
+async def _partitions(consumer, topic: str):
+    from aiokafka.structs import TopicPartition
+
+    for _ in range(50):
+        found = consumer.partitions_for_topic(topic)
+        if found:
+            return [TopicPartition(topic, p) for p in sorted(found)]
+        await consumer._client.force_metadata_update()  # noqa: SLF001
+        await asyncio.sleep(0.1)
+    raise SystemExit(f"topic {topic} not found")
+
+
 async def api(args) -> dict:
     ids = [f"C{i:07d}" for i in range(1, args.customers + 1)]
     if args.customer_ids:
@@ -115,10 +205,20 @@ def main() -> None:
     p_api.add_argument("--seconds", type=int, default=30)
     p_api.add_argument("--customers", type=int, default=100)
     p_api.add_argument("--customer-ids", help="file with whitespace-separated ids")
-    for p in (p_ing, p_api):
+    p_kafka = sub.add_parser("kafka")
+    p_kafka.add_argument("--topic", required=True)
+    p_kafka.add_argument("--group", required=True, help="the consumers' STREAM_GROUP_ID")
+    p_kafka.add_argument("--dataset", default="test-dataset")
+    p_kafka.add_argument("--copies", type=int, default=10)
+    p_kafka.add_argument("--distinct-customers", action="store_true",
+                         help="copy c goes to customers '<id>~c', as a real stream spreads "
+                              "over many customers; create them in the consumers' DB first")
+    p_kafka.add_argument("--bootstrap", default="localhost:29092")
+    p_kafka.add_argument("--timeout", type=int, default=900)
+    for p in (p_ing, p_api, p_kafka):
         p.add_argument("--out", help="append the JSON result to this file")
     args = parser.parse_args()
-    result = asyncio.run(ingest(args) if args.mode == "ingest" else api(args))
+    result = asyncio.run({"ingest": ingest, "api": api, "kafka": kafka}[args.mode](args))
     result |= {"mode": args.mode, "at": datetime.now(UTC).isoformat()}
     print(json.dumps(result, indent=2))
     if args.out:

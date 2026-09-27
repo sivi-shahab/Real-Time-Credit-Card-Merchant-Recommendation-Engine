@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     dedup_ttl_seconds: int = 60 * 60 * 24 * 7
     max_simulator_tps: int = 5000  # SIM-003
     stream_concurrency: int = 32
+    # Consumers scale by partition within one group (ADR-0014); several on one host need
+    # their own metrics ports.
+    stream_group_id: str = "feature-engine"
+    stream_metrics_port: int = 9102
     redis_max_connections: int = 64
     pg_max_connections: int = 20
     # Apply db/schema.sql at startup (dev: the app role owns the schema). Production sets

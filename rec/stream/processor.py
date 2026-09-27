@@ -176,12 +176,12 @@ class FeatureProcessor:
 async def run() -> None:
     setup_logging()
     setup_tracing("rec-stream")
-    start_http_server(9102)  # Prometheus scrape for the consumer
+    start_http_server(settings.stream_metrics_port)  # Prometheus scrape for the consumer
     store = OnlineStore()
     consumer = AIOKafkaConsumer(
         settings.topic_transactions,
         bootstrap_servers=settings.kafka_bootstrap,
-        group_id="feature-engine",
+        group_id=settings.stream_group_id,
         enable_auto_commit=False,
         auto_offset_reset="earliest",
     )
