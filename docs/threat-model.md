@@ -34,6 +34,7 @@ fraud detection.
  B5  API ──► ranking service;  training ──► model artifacts/MLflow ML supply chain
      live feedback ──► auto-retrain · online bandit ──► registry     (ADR-0007)
  B6  CI / operators ──► images, secrets, deployment                delivery
+ B7  staff browser ──► Superset ──► `analytics` views (rec_analytics) internal analytics
 ```
 
 ## Spoofing
@@ -79,8 +80,9 @@ fraud detection.
 | I-5 | Unauthenticated internal endpoints reachable: ranking `:8100`, MLflow `:5000`, Prometheus `:9090`, `/metrics`, Keycloak admin with default password | B4, B5 | Published on host ports for local work only. Production: cluster-internal services, network policies, SSO in front of MLflow/Prometheus, no default credentials | — | Open |
 | I-6 | Traffic read in transit | all | Plaintext locally. TLS on every external and internal hop | — | Open |
 | I-7 | Erased customer's data survives | B3, B4 | AC-009 maker-checker erasure with tombstones honoured by stream, reload, rebuild and training; it also deletes the promo-holdout arm, the bandit's stored contexts and the served-slate records. Kafka retention, on-disk datasets (including `live-*` exports), old MLflow artifacts and backups taken before the erasure are outside it | `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Partial |
-| I-8 | Bulk export of customer data | B2 | No export endpoint; list endpoints capped at 200 rows and paginated | — | Mitigated |
+| I-8 | Bulk export of customer data | B2, B7 | No export endpoint in the API; list endpoints capped at 200 rows and paginated. In Superset only Platform Operator (Superset Admin) may download CSV: `can_csv` and SQL Lab's `can_export_csv` are taken from every other role on each start. Residual: Analyst and ML Engineer can page through the views in SQL Lab (`ROW_LIMIT` 10 000) | Superset checked by hand: CSV `403` for `analyst`, `200` for `operator` | Partial |
 | I-9 | Every auto-retrain run copies customer behaviour to disk | B5 | After each run only the newest `AUTO_RETRAIN_KEEP_EXPORTS` (3) exports stay, plus any a job is still reading and any behind a serving or roll-back model (kept reproducible); deletions are audited (`dataset.prune`). Only `live-<timestamp>` directories are ever deleted. Erased customers stay in retained exports until they age out; training filters them on read | `test_prune_keeps_newest_and_pinned_and_touches_nothing_else`, `test_export_retention_spares_the_dataset_behind_a_serving_model`, `test_auto_retrain_exports_live_feedback_once_past_the_threshold` | Partial |
+| I-10 | Analytics dashboards expose more than operations needs, or reach operational tables | B7 | SSO only through Keycloak, one application role per identity (SEC-001), no local accounts. Superset connects as `rec_analytics`: `SELECT` on the `analytics` views only, no raw `envelope`, reject detail, audit changes or artifact paths; customer ids stay pseudonymous. Serving log follows erasure (AC-009) and a 180-day retention. Residual: Superset's metadata and access log (`logs` table) sit in SQLite on a local volume, production needs its own Postgres and log shipping; legal review of the exposed columns is pending (`.scratch/superset-personalization-analytics/issues/06-…`) | `test_the_analytics_role_reads_the_views_and_nothing_else`, `test_what_a_customer_is_served_is_logged_for_analytics`, `test_ac009_erased_customer_is_not_rematerialised_by_replay` | Partial |
 
 ## Denial of service
 

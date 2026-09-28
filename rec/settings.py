@@ -49,6 +49,8 @@ class Settings(BaseSettings):
     # Local only: lets the migration job create the `rec_app` login role with this
     # password. Production provisions that role itself and leaves this empty.
     app_db_password: str = ""
+    # Local only, as above, for `rec_analytics`: Superset's read-only role (analytics views)
+    analytics_db_password: str = ""
     mlflow_tracking_uri: str = "sqlite:///./data/mlflow.db"
     mlflow_experiment: str = "merchant-ranking"
     model_dir: str = "./data/models"
@@ -93,6 +95,10 @@ class Settings(BaseSettings):
     # D-1: requests per customer per minute, across all API workers. 0 = unlimited.
     rate_limit_recommendations_per_minute: int = 60
     rate_limit_feedback_per_minute: int = 120
+    # What customers were served, for analytics (rec/api/serving_log.py)
+    serving_log_flush_seconds: float = 1.0
+    serving_log_max_buffer: int = 20000  # per API process; beyond it rows are dropped
+    serving_log_retention_days: int = 180
 
     # Canary guardrail (SDD 17.2 step 14): automatic rollback when the live model misbehaves.
     guardrail_interval_seconds: int = 30

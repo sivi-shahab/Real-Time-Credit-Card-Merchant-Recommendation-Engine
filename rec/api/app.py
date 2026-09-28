@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from opentelemetry import trace
 from pydantic import BaseModel, Field
 
-from rec.api import bff, jobs, learning_settings, ml_jobs, service
+from rec.api import bff, jobs, learning_settings, ml_jobs, service, serving_log
 from rec.api.auth import Principal, customer_self, principal, rate_limited, require
 from rec.core.models import (
     FEATURE_SCHEMA_VERSION,
@@ -77,10 +77,14 @@ async def lifespan(app: FastAPI):
     await record_learning_config()
     # Serving-side only: the learning loops and training run in the worker (ADR-0012).
     watchers = [asyncio.create_task(task) for task in (
-        guardrail.loop(store), learning_settings.loop())]
+        guardrail.loop(store), learning_settings.loop(), serving_log.loop())]
     yield
     for watcher in watchers:
         watcher.cancel()
+    try:
+        await serving_log.flush()  # what was served since the last flush
+    except Exception:  # noqa: BLE001 - shutting down; analytics rows only
+        log.exception("final serving log flush failed")
     await ranking_client.close()
     await store.close()
     await pg.close()
@@ -169,6 +173,8 @@ async def get_recommendations(
         )
     except KeyError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"customer {customer_id} not found")
+    if p.kind == "customer":  # staff reading a customer's list were not served it
+        serving_log.record(response, city_code=cityCode, channel=channel)
     try:  # S-5: feedback is later checked against exactly this slate
         await store.record_served(customer_id, response.requestId, response.modelVersion,
                                   [item.merchantId for item in response.recommendations])
@@ -912,7 +918,8 @@ async def decide_erasure(request_id: str, body: ErasureDecision, request: Reques
                                  VALUES ($1,$2) ON CONFLICT DO NOTHING""",
                               customer_id, request_id)
             for table in ("transaction_log", "impressions", "interactions",
-                          "shadow_evaluations", "promo_experiment", "customers"):
+                          "shadow_evaluations", "promo_experiment", "recommendation_log",
+                          "customers"):
                 sql = f"DELETE FROM {table} WHERE customer_id=$1"  # nosec B608
                 tag = await con.execute(sql, customer_id)
                 result[table] = int(tag.split()[-1])

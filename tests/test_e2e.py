@@ -1303,6 +1303,13 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
                           VALUES ($1, 'TREATMENT', 10) ON CONFLICT DO NOTHING""", cid)
     await store.r.hset(bandit.context_key(cid, "req-erase"), "M1", "{}")
     await store.record_served(cid, "req-erase", "baseline-1.0.0", ["M1"])
+    from rec.api import serving_log
+    served = await client.get(f"/api/v1/customer/{cid}/recommendations",
+                              headers={"Authorization": f"Bearer cust-{cid}"})
+    assert served.status_code == 200
+    await serving_log.flush()
+    assert await conn.fetchval(
+        "SELECT count(*) FROM recommendation_log WHERE customer_id=$1", cid) >= 1
 
     filed = await client.post("/admin/v1/erasure-requests",
                               json={"customerId": cid, "reason": "PDP deletion request"},
@@ -1316,6 +1323,7 @@ async def test_ac009_erased_customer_is_not_rematerialised_by_replay(client, rep
                              json={"approve": True}, headers=APPROVER)
     assert done.status_code == 200 and done.json()["deleted"]["transaction_log"] > 0
     assert done.json()["deleted"]["promo_experiment"] == 1
+    assert done.json()["deleted"]["recommendation_log"] >= 1
     assert not await store.r.exists(bandit.context_key(cid, "req-erase"))
     assert not await store.served(cid, "req-erase")
 
@@ -1632,3 +1640,44 @@ async def test_feature_updates_are_one_per_customer_per_batch(replayed):
     assert len(updates) == 1
     state = await store.load(purchase["payload"]["customerId"])
     assert updates[0]["featureVersion"] == state.featureVersion
+
+
+async def test_what_a_customer_is_served_is_logged_for_analytics(client, replayed):
+    """Every response served to a customer is logged with its items, reasons and promos,
+    cache hits included; staff reads and previews are not; the log never blocks serving."""
+    from rec.api import serving_log
+
+    conn = await pg.pool()
+    cid = await conn.fetchval(
+        """SELECT customer_id FROM transaction_log WHERE outcome='APPLIED'
+           GROUP BY customer_id ORDER BY count(*) DESC OFFSET 3 LIMIT 1""")
+    own = {"Authorization": f"Bearer cust-{cid}"}
+    await serving_log.flush()
+    before = await conn.fetchval("SELECT count(*) FROM recommendation_log WHERE customer_id=$1",
+                                 cid)
+
+    await store.invalidate_customer(cid)  # the first request computes and caches
+    first = (await client.get(f"/api/v1/customer/{cid}/recommendations",
+                              headers=own)).json()
+    again = (await client.get(f"/api/v1/customer/{cid}/recommendations", headers=own)).json()
+    await client.get(f"/api/v1/customer/{cid}/recommendations", headers=ANALYST)
+    await client.post("/admin/v1/recommendations/preview", json={"customerId": cid},
+                      headers=ANALYST)
+    assert await serving_log.flush() == 2, "two customer responses, no staff read, no preview"
+
+    rows = await conn.fetch(
+        """SELECT * FROM recommendation_log WHERE customer_id=$1 ORDER BY served_at""", cid)
+    assert len(rows) - before == 2
+    live, cached = rows[-2], rows[-1]
+    assert live["source"] == first["source"] == "LIVE" and cached["source"] == "CACHE"
+    assert live["request_id"] == cached["request_id"] == again["requestId"]
+    assert live["personalized"] and not live["cold_start"]
+    items = await conn.fetch(
+        """SELECT * FROM recommendation_log_items WHERE log_id=$1 ORDER BY position""",
+        live["log_id"])
+    assert [i["merchant_id"] for i in items] == [
+        r["merchantId"] for r in first["recommendations"]]
+    assert [list(i["reason_codes"]) for i in items] == [
+        r["reasonCodes"] for r in first["recommendations"]]
+    assert [i["promotion_id"] for i in items] == [
+        (r["promotion"] or {}).get("promotionId") for r in first["recommendations"]]

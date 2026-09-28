@@ -94,6 +94,7 @@ services:
       <<: *backend_env
       POSTGRES_DSN: postgresql://rec:rec@postgres:5432/rec
       APP_DB_PASSWORD: rec-app-local
+      ANALYTICS_DB_PASSWORD: rec-analytics-local
     depends_on:
       postgres: {condition: service_healthy}
     restart: "no"
@@ -192,6 +193,26 @@ services:
     image: jaegertracing/jaeger:2.11.0
     ports: ["16686:16686", "4318:4318"]
 
+  # Analytics dashboards on the `analytics` views (.scratch/superset-personalization-
+  # analytics): http://localhost:8088, sign in through Keycloak. Reads as `rec_analytics`,
+  # which cannot see the operational tables.
+  superset:
+    build: deploy/superset
+    command: >
+      sh -c "superset db upgrade && superset init && python /app/provision.py
+      && /usr/bin/run-server.sh"
+    environment:
+      SUPERSET_SECRET_KEY: local-dev-superset-secret-change-me-at-least-32-chars
+      SUPERSET_OIDC_CLIENT_ID: rec-superset
+      SUPERSET_OIDC_CLIENT_SECRET: local-dev-superset-secret-change-me
+      SUPERSET_OIDC_DISCOVERY_URL: http://keycloak:8080/realms/rec/.well-known/openid-configuration
+      ANALYTICS_DSN: postgresql://rec_analytics:rec-analytics-local@postgres:5432/rec
+    ports: ["8088:8088"]
+    volumes: ["superset-home:/app/superset_home"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      keycloak: {condition: service_started}
+
   prometheus:
     image: prom/prometheus:v2.55.1
     volumes:
@@ -200,5 +221,6 @@ services:
     ports: ["9090:9090"]
 
 volumes:
+  superset-home:
   pgdata:
   redisdata:
