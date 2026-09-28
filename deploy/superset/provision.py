@@ -235,14 +235,23 @@ def query_context(form: dict, datasource_id: int) -> dict:
             "result_type": "full"}
 
 
-def restrict_csv_export(sm) -> None:
-    """Only Superset admins (Platform Operator) download rows as CSV. `superset init`
-    grants it to the built-in roles on every start, so it is taken back here."""
-    perms = [sm.find_permission_view_menu("can_csv", "Superset"),
-             sm.find_permission_view_menu("can_export_csv", "SQLLab")]
-    for name in ("Alpha", "Gamma", "sql_lab"):
+# `superset init` grants these to the built-in roles on every start; they are taken back
+# after it. CSV: only Superset admins (Platform Operator) download rows. Gamma: the readers'
+# base role (ticket 03) views and filters dashboards but saves no chart, dashboard or tag.
+TAKEN_BACK = {
+    "Alpha": [("can_csv", "Superset")],
+    "sql_lab": [("can_csv", "Superset"), ("can_export_csv", "SQLLab")],
+    "Gamma": [("can_csv", "Superset"), ("can_write", "Chart"), ("can_write", "Dashboard"),
+              ("can_write", "Tag"), ("can_bulk_create", "Tag"), ("can_tag", "Chart"),
+              ("can_tag", "Dashboard"), ("can_delete_embedded", "Dashboard")],
+}
+
+
+def take_back_permissions(sm) -> None:
+    for name, pairs in TAKEN_BACK.items():
+        drop = [sm.find_permission_view_menu(*pair) for pair in pairs]
         role = sm.find_role(name)
-        role.permissions = [p for p in role.permissions if p not in perms]
+        role.permissions = [p for p in role.permissions if p not in drop]
 
 
 def layout(title: str, rows: list[list[tuple]]) -> dict:
@@ -332,7 +341,7 @@ def main() -> None:
             dash.json_metadata = json.dumps({"refresh_frequency": 0,
                                              "color_scheme": "supersetColors",
                                              "native_filter_configuration": []})
-        restrict_csv_export(security_manager)
+        take_back_permissions(security_manager)
         db.session.commit()
         print(f"provisioned {len(DASHBOARDS)} dashboards, {len(datasets)} datasets")
 
