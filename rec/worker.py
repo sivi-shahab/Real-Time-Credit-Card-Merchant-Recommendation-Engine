@@ -17,7 +17,7 @@ import logging
 
 from prometheus_client import start_http_server
 
-from rec.api import auto_retrain, learning_settings, ml_jobs
+from rec.api import auto_retrain, learning_settings, ml_jobs, serving_log
 from rec.ml import bandit, uplift
 from rec.obs import setup_logging
 from rec.settings import settings
@@ -46,6 +46,18 @@ async def uplift_loop(store: OnlineStore) -> None:
             log.info("uplift report: %s", await uplift.scheduled_report(store))
 
 
+async def serving_log_prune_loop() -> None:
+    """Keep the analytics serving log within its retention; hourly is plenty."""
+    while True:
+        try:
+            removed = await serving_log.prune()
+            if removed:
+                log.info("serving log: pruned %s responses past retention", removed)
+        except Exception:  # noqa: BLE001 - retried next hour
+            log.exception("serving log prune failed")
+        await asyncio.sleep(3600)
+
+
 async def run() -> None:
     setup_logging()
     start_http_server(settings.worker_metrics_port)
@@ -55,7 +67,8 @@ async def run() -> None:
     log.info("worker started: training queue, uplift report, auto-retrain, bandit")
     try:
         await asyncio.gather(training_loop(), uplift_loop(store), auto_retrain.loop(store),
-                             bandit.loop(store), learning_settings.loop())
+                             bandit.loop(store), learning_settings.loop(),
+                             serving_log_prune_loop())
     finally:
         await store.close()
         await pg.close()

@@ -246,12 +246,15 @@ if __name__ == "__main__":  # the owner's migration job (E-4): POSTGRES_DSN is t
     async def _main() -> None:
         p = await asyncpg.create_pool(settings.postgres_dsn, min_size=1, max_size=1)
         try:
-            if settings.app_db_password:
+            for role, secret in (("rec_app", settings.app_db_password),
+                                 ("rec_analytics", settings.analytics_db_password)):
+                if not secret:
+                    continue
                 async with p.acquire() as con:
                     verb = "ALTER" if await con.fetchval(
-                        "SELECT 1 FROM pg_roles WHERE rolname = 'rec_app'") else "CREATE"
-                    password = settings.app_db_password.replace("'", "''")
-                    await con.execute(f"{verb} ROLE rec_app LOGIN PASSWORD '{password}'")
+                        "SELECT 1 FROM pg_roles WHERE rolname = $1", role) else "CREATE"
+                    password = secret.replace("'", "''")
+                    await con.execute(f"{verb} ROLE {role} LOGIN PASSWORD '{password}'")
             await _migrate(p)
         finally:
             await p.close()

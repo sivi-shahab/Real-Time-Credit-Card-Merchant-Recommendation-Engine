@@ -299,6 +299,170 @@ ALTER TABLE learning_setting_requests
 ALTER TABLE learning_setting_requests ADD CONSTRAINT learning_setting_requests_status_check
   CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'));
 
+-- ===== What customers were served, for analytics (Superset) =====
+-- One row per response served (a cached response reuses its requestId, so it is not the
+-- key). Written in batches off the request path; erasure deletes a customer's rows and
+-- the worker prunes past SERVING_LOG_RETENTION_DAYS.
+CREATE TABLE IF NOT EXISTS recommendation_log (
+  log_id        UUID PRIMARY KEY,
+  request_id    TEXT NOT NULL,
+  customer_id   TEXT NOT NULL,
+  served_at     TIMESTAMPTZ NOT NULL,
+  model_version TEXT NOT NULL,
+  source        TEXT NOT NULL CHECK (source IN ('LIVE','CACHE','FALLBACK')),
+  personalized  BOOLEAN NOT NULL,
+  cold_start    BOOLEAN NOT NULL,
+  city_code     TEXT,
+  channel       TEXT,
+  item_count    INT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reclog_time ON recommendation_log (served_at);
+CREATE INDEX IF NOT EXISTS reclog_customer ON recommendation_log (customer_id);
+CREATE TABLE IF NOT EXISTS recommendation_log_items (
+  log_id        UUID NOT NULL REFERENCES recommendation_log (log_id) ON DELETE CASCADE,
+  position      INT NOT NULL,
+  merchant_id   TEXT NOT NULL,
+  category_code TEXT NOT NULL,
+  reason_codes  TEXT[] NOT NULL,
+  promotion_id  TEXT,
+  PRIMARY KEY (log_id, position)
+);
+
+-- ===== Analytics schema for Superset (.scratch/superset-personalization-analytics) =====
+-- Views only, read by the `rec_analytics` role, which has no access to the operational
+-- tables. No raw envelopes and no free-text rejection details; customer ids are the same
+-- pseudonymous ids the dashboard shows. Erased customers are gone from the base tables,
+-- so they are gone here too.
+CREATE SCHEMA IF NOT EXISTS analytics;
+
+CREATE OR REPLACE VIEW analytics.customers AS
+  SELECT customer_id, city_code, card_tier, segment, personalization_allowed
+  FROM customers;
+
+CREATE OR REPLACE VIEW analytics.served_responses AS
+  SELECT l.log_id, l.request_id, l.customer_id, l.served_at,
+         l.served_at::date AS served_day, l.model_version, l.source, l.personalized,
+         l.cold_start, l.city_code AS requested_city, l.channel, l.item_count,
+         c.city_code AS customer_city, c.card_tier, c.segment
+  FROM recommendation_log l LEFT JOIN customers c USING (customer_id);
+
+CREATE OR REPLACE VIEW analytics.served_items AS
+  SELECT i.log_id, l.served_at, l.customer_id, i.position, i.position + 1 AS rank,
+         i.merchant_id, m.merchant_name, i.category_code, i.reason_codes,
+         i.promotion_id, i.promotion_id IS NOT NULL AS has_promotion,
+         l.model_version, l.source, l.personalized, c.segment, c.card_tier,
+         c.city_code AS customer_city
+  FROM recommendation_log_items i
+  JOIN recommendation_log l USING (log_id)
+  LEFT JOIN merchants m USING (merchant_id)
+  LEFT JOIN customers c ON c.customer_id = l.customer_id;
+
+CREATE OR REPLACE VIEW analytics.served_item_reasons AS
+  SELECT i.log_id, l.served_at, i.position, i.category_code, r.reason_code,
+         l.model_version, l.personalized
+  FROM recommendation_log_items i
+  JOIN recommendation_log l USING (log_id)
+  CROSS JOIN LATERAL unnest(i.reason_codes) AS r(reason_code);
+
+CREATE OR REPLACE VIEW analytics.impression_outcomes AS
+  SELECT im.impression_id, im.request_id, im.customer_id, im.merchant_id,
+         m.category_code, im.position, im.position + 1 AS rank, im.model_version,
+         im.occurred_at AS shown_at,
+         COALESCE(bool_or(ix.interaction_type = 'CLICK'), false) AS clicked,
+         COALESCE(bool_or(ix.interaction_type = 'PROMO_ACTIVATION'), false) AS promo_activated,
+         COALESCE(bool_or(ix.interaction_type = 'REDEMPTION'), false) AS redeemed,
+         c.segment, c.card_tier, c.city_code AS customer_city
+  FROM impressions im
+  LEFT JOIN interactions ix USING (impression_id)
+  LEFT JOIN merchants m ON m.merchant_id = im.merchant_id
+  LEFT JOIN customers c ON c.customer_id = im.customer_id
+  GROUP BY im.impression_id, m.category_code, c.segment, c.card_tier, c.city_code;
+
+CREATE OR REPLACE VIEW analytics.transactions AS
+  SELECT t.transaction_id, t.customer_id, t.merchant_id, m.merchant_name, m.category_code,
+         m.city_code AS merchant_city, t.txn_type,
+         -- IDR has no minor unit: amount_minor 150000 is IDR 150.000 (SDD 6.1)
+         CASE WHEN t.txn_type = 'PURCHASE' THEN t.amount_minor ELSE -t.amount_minor END
+           AS net_amount_idr,
+         t.occurred_at, t.occurred_at::date AS occurred_day, t.received_at,
+         EXTRACT(EPOCH FROM (t.received_at - t.occurred_at)) / 3600.0 AS lateness_hours,
+         c.segment, c.card_tier, c.city_code AS customer_city
+  FROM transaction_log t
+  LEFT JOIN merchants m ON m.merchant_id = t.merchant_id
+  LEFT JOIN customers c ON c.customer_id = t.customer_id
+  WHERE t.outcome = 'APPLIED';
+
+CREATE OR REPLACE VIEW analytics.ingestion_quality AS
+  SELECT received_at, received_at::date AS received_day, outcome, reject_code, txn_type
+  FROM transaction_log;
+
+CREATE OR REPLACE VIEW analytics.shadow_evaluations AS
+  SELECT request_id, model_version, served_source, rank_agreement, top1_agreement,
+         model_latency_ms, occurred_at
+  FROM shadow_evaluations;
+
+CREATE OR REPLACE VIEW analytics.models AS
+  SELECT model_version, created_at, approved, dataset_id, feature_schema_version,
+         trainer_version,
+         (metrics ->> 'ndcg@10')::float AS ndcg10,
+         (baseline_metrics ->> 'ndcg@10')::float AS baseline_ndcg10,
+         (metrics ->> 'ndcg@5')::float AS ndcg5,
+         (baseline_metrics ->> 'ndcg@5')::float AS baseline_ndcg5,
+         (metrics ->> 'inferenceLatencyMsP95')::float AS inference_p95_ms
+  FROM models;
+
+CREATE OR REPLACE VIEW analytics.model_deployment AS
+  SELECT mode, model_version, previous_version, canary_percent, promoted_by, promoted_at, note
+  FROM model_deployment;
+
+CREATE OR REPLACE VIEW analytics.promotions AS
+  SELECT p.promotion_id, p.merchant_id, m.merchant_name, m.category_code, p.benefit_type,
+         p.benefit_value, p.starts_at, p.ends_at, p.campaign_quota, p.quota_used,
+         CASE WHEN p.campaign_quota > 0
+              THEN 100.0 * p.quota_used / p.campaign_quota END AS quota_used_pct,
+         p.status
+  FROM promotions p LEFT JOIN merchants m USING (merchant_id);
+
+-- One row per step a promoted item reached, for a funnel chart: served with a promo ->
+-- shown on screen (impression) -> activated -> redeemed.
+CREATE OR REPLACE VIEW analytics.promo_funnel AS
+  WITH offered AS (
+    SELECT DISTINCT l.request_id, l.customer_id, i.merchant_id, i.promotion_id, l.served_at
+    FROM recommendation_log_items i JOIN recommendation_log l USING (log_id)
+    WHERE i.promotion_id IS NOT NULL
+  ), shown AS (
+    SELECT DISTINCT ON (im.impression_id) im.impression_id, o.promotion_id, im.occurred_at
+    FROM impressions im
+    JOIN offered o ON o.request_id = im.request_id AND o.merchant_id = im.merchant_id
+  )
+  SELECT '1. Ditawarkan' AS stage, promotion_id, served_at AS at FROM offered
+  UNION ALL SELECT '2. Ditampilkan', promotion_id, occurred_at FROM shown
+  UNION ALL SELECT '3. Diaktifkan', s.promotion_id, ix.occurred_at
+    FROM shown s JOIN interactions ix USING (impression_id)
+    WHERE ix.interaction_type = 'PROMO_ACTIVATION'
+  UNION ALL SELECT '4. Ditukar', s.promotion_id, ix.occurred_at
+    FROM shown s JOIN interactions ix USING (impression_id)
+    WHERE ix.interaction_type = 'REDEMPTION';
+
+CREATE OR REPLACE VIEW analytics.uplift_reports AS
+  SELECT created_at, (report ->> 'customers')::int AS customers,
+         (report ->> 'averageEffect')::float AS average_effect,
+         (report -> 'qini' ->> 'model')::float AS qini_model,
+         (report -> 'qini' ->> 'random')::float AS qini_random,
+         (report -> 'segments' ->> 'persuadable')::float AS persuadable_share,
+         (report -> 'segments' ->> 'sleepingDog')::float AS sleeping_dog_share
+  FROM uplift_reports;
+
+-- `rec_analytics`, when provisioned, reads the analytics views and nothing else.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rec_analytics') THEN
+    GRANT USAGE ON SCHEMA analytics TO rec_analytics;
+    GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO rec_analytics;
+    REVOKE CREATE ON SCHEMA public FROM rec_analytics;
+  END IF;
+END $$;
+
 -- ===== E-4: the application connects as `rec_app`, never as the owner =====
 -- Provisioning creates the role (LOGIN, its own password); this grants it data access
 -- only, re-applied on every migration so new tables are covered. Without ownership it

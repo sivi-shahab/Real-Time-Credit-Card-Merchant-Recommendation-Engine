@@ -104,7 +104,7 @@ menu). The repository documents they summarise stay the source of truth.
 cp .env.example .env
 docker compose up -d --build   # kafka, postgres, redis, migrate, api, stream, ranking,
                                # worker, mlflow, dashboard, keycloak, prometheus,
-                               # jaeger, kafka-ui
+                               # jaeger, kafka-ui, superset
 ```
 
 `migrate` applies `db/schema.sql` as the database owner and exits; every service then
@@ -121,6 +121,7 @@ audit trail (threat E-4). Scripts run from the host with `.env` still use the ow
 | MLflow    | http://localhost:5000        | runs, metrics, artifacts, model registry |
 | Jaeger    | http://localhost:16686       | traces from api and ranking; search a `traceId` |
 | Kafka UI  | http://localhost:8080        | topics, messages, consumer groups and lag (read-only) |
+| Superset  | http://localhost:8088        | analytics dashboards; sign in through Keycloak (below) |
 
 **Signing in.** The browser only ever holds an opaque `HttpOnly` session cookie issued by
 the BFF (`/bff/*`, [ADR-0006](docs/adr/0006-bff-session-and-oidc.md)); mutations carry a
@@ -140,6 +141,15 @@ passwords exist only in the local realm.
 | `auditor` | `auditor-local-pass` | Auditor | read-only, including the audit log and erasures |
 | `viewer` | `viewer-local-pass` | Viewer | read-only overview: merchants, promotions, models, metrics |
 | `conflicted` | `conflicted-local-pass` | ML Engineer + Approver | refused at login by design: one identity, one role (SEC-001) |
+
+The same users sign in to Superset (http://localhost:8088, **Sign In with keycloak**),
+which shows six dashboards on the `analytics` views: personalisation, customer spending,
+promo, engagement, model health, data quality. Superset reads as `rec_analytics`, which
+sees those views and no operational table. Platform Operator becomes a Superset admin and
+is the only role that can download rows as CSV; Analyst and ML Engineer can also build
+charts and query the views in SQL Lab; the other roles read dashboards. The dashboards are
+code (`deploy/superset/provision.py`) and are recreated on every start, so edits made in
+the UI to them do not survive a restart.
 
 Separation of duties shows in the table: the ML Engineer who trains a model cannot promote
 it, and an erasure is requested by one person and approved by another. The roles and
