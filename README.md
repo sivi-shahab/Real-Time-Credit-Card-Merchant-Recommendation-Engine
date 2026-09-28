@@ -171,6 +171,7 @@ bash scripts/smoke_ml.sh      # ML path: train, gate, promote, serve, degrade, r
 bash scripts/chaos.sh         # Redis loss, ranking loss, consumer SIGKILL + broker loss
 bash scripts/dr_drill.sh      # backup, destroy, restore, rebuild Redis, verify identical
 python scripts/loadtest.py api --concurrency 8 --seconds 30   # latency/throughput
+python scripts/demo_analytics.py   # demo data for the Superset dashboards (re-runnable)
 ```
 `loadtest.py api` is one Python process and tops out near 150 rps; above 8 clients use
 `ab`/k6 or the generator becomes what you measure.
