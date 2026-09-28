@@ -29,12 +29,12 @@ OAUTH_PROVIDERS = [{
     },
 }]
 
-# Application role (Keycloak realm role) -> Superset roles. Analysts and ML engineers
-# explore and build charts; everyone else reads dashboards.
+# Application role (Keycloak realm role) -> Superset roles. ML engineers explore and build
+# charts; everyone else, Analyst included (ticket 03), reads dashboards.
 READERS = ["Gamma", "Analytics Reader"]
 AUTH_ROLES_MAPPING = {
     "Platform Operator": ["Admin"],
-    "Analyst": ["Alpha", "sql_lab"],
+    "Analyst": READERS,
     "ML Engineer": ["Alpha", "sql_lab"],
     "Marketing Operator": READERS,
     "Approver": READERS,

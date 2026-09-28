@@ -146,8 +146,8 @@ The same users sign in to Superset (http://localhost:8088, **Sign In with keyclo
 which shows six dashboards on the `analytics` views: personalisation, customer spending,
 promo, engagement, model health, data quality. Superset reads as `rec_analytics`, which
 sees those views and no operational table. Platform Operator becomes a Superset admin and
-is the only role that can download rows as CSV; Analyst and ML Engineer can also build
-charts and query the views in SQL Lab; the other roles read dashboards. The dashboards are
+is the only role that can download rows as CSV; ML Engineer can also build charts and
+query the views in SQL Lab; the other roles, Analyst included, read dashboards. The dashboards are
 code (`deploy/superset/provision.py`) and are recreated on every start, so edits made in
 the UI to them do not survive a restart.
 
