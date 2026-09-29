@@ -469,6 +469,7 @@ CREATE OR REPLACE VIEW analytics.impression_reasons AS
   CROSS JOIN LATERAL unnest(s.reason_codes) AS r(reason_code);
 
 -- Recency and frequency per customer, bucketed; the number prefix orders the buckets.
+-- value_decile: 1 = the tenth of transacting customers with the largest net spend.
 CREATE OR REPLACE VIEW analytics.customer_activity AS
   SELECT c.customer_id, c.segment, c.card_tier, c.city_code AS customer_city,
          a.last_purchase_at, COALESCE(a.purchases_90d, 0) AS purchases_90d,
@@ -481,8 +482,13 @@ CREATE OR REPLACE VIEW analytics.customer_activity AS
               WHEN a.purchases_90d = 1 THEN '2. 1'
               WHEN a.purchases_90d <= 5 THEN '3. 2-5'
               WHEN a.purchases_90d <= 20 THEN '4. 6-20'
-              ELSE '5. Lebih dari 20' END AS frequency_bucket
+              ELSE '5. Lebih dari 20' END AS frequency_bucket,
+         v.spend_idr, v.value_decile
   FROM customers c
+  LEFT JOIN (
+    SELECT customer_id, sum(net_amount_idr) AS spend_idr,
+           ntile(10) OVER (ORDER BY sum(net_amount_idr) DESC) AS value_decile
+    FROM analytics.transactions GROUP BY customer_id) v USING (customer_id)
   LEFT JOIN LATERAL (
     SELECT max(t.occurred_at) AS last_purchase_at,
            count(*) FILTER (WHERE t.occurred_at > now() - interval '90 days') AS purchases_90d

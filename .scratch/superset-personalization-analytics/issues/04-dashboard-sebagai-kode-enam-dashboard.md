@@ -27,3 +27,14 @@ yang tidak lagi ada di kode dihapus saat start; chart buatan pengguna (ada pemil
 Dicek: 53/53 chart mengembalikan data lewat API dan tampil di browser sebagai `analyst`.
 Tidak dibuat: chart uplift, karena `uplift_reports` kosong selama holdout mati
 (`PROMO_HOLDOUT_PERCENT=0`); deskripsi dashboard Promo menyebutnya.
+
+2026-09-29 — Lima chart insight ditambah (58 chart), dipilih setelah data diperiksa:
+porsi belanja per desil nasabah (desil 1 = 60% belanja; kolom baru `spend_idr` dan
+`value_decile` di `customer_activity`), heatmap porsi kategori per segmen, heatmap recency ×
+frequency, porsi nasabah belum pernah bertransaksi (60%), dan CTR mingguan per versi model
+(`baseline-1.0.0` 13% vs historis 16,6%). Tidak dibuat karena datanya datar: CTR per
+segmen/tier (15,4–16,2%), belanja per hari dalam minggu, daftar nasabah bernilai tinggi yang
+mulai tidak aktif (tidak ada). Chart jam transaksi ditunda: puncak di 11–12 dan 17–19 UTC,
+yang cocok dengan jam makan siang/malam waktu lokal, jadi `occurred_at` kemungkinan waktu
+lokal yang tersimpan sebagai UTC; perlu dicek di sumber data dulu.
+Dicek: 5/5 chart baru mengembalikan data lewat ChartDataCommand; belum dilihat di browser.
