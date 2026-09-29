@@ -51,8 +51,9 @@ perilaku transaksi, lewat Apache Superset, tanpa akses langsung ke tabel operasi
 5. R5 — Login Superset lewat Keycloak (OIDC); peran Superset dipetakan dari peran aplikasi
    (Analyst, Marketing Operator, ML Engineer, Auditor: baca; Platform Operator: admin
    Superset). Tidak ada akun lokal selain admin bootstrap.
-6. R6 — Dashboard sebagai kode: dataset, chart, dan dashboard diekspor sebagai bundle YAML di
-   repo dan diimpor otomatis saat start, sehingga bisa direview dan direproduksi.
+6. R6 — Dashboard sebagai kode: dataset, chart, dan dashboard didefinisikan di repo dan dibuat
+   ulang otomatis saat start, sehingga bisa direview dan direproduksi. Diputuskan 2026-09-29:
+   provisioning Python (`deploy/superset/provision.py`), bukan bundle YAML ekspor Superset.
 7. R7 — Enam dashboard sesuai pertanyaan 1–6 di atas.
 8. R8 — Data demo lokal: skrip memuat feedback dari dataset sintetis dan menjalankan trafik
    rekomendasi agar semua dashboard berisi data.
