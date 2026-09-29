@@ -14,4 +14,4 @@ tiket per langkah. Status tiket: `ready` (bisa dikerjakan di repo sekarang),
 | [supply-chain-security](supply-chain-security/spec.md) | tim platform (registry) | – |
 | [privacy-and-policy-decisions](privacy-and-policy-decisions/spec.md) | legal, bisnis, keamanan informasi | – |
 | [operations-readiness](operations-readiness/spec.md) | organisasi | – |
-| [superset-personalization-analytics](superset-personalization-analytics/spec.md) | – (bisa dikerjakan sekarang) | 01, 02 |
+| [superset-personalization-analytics](superset-personalization-analytics/spec.md) | legal (tiket 06) | – (01–05 selesai) |
