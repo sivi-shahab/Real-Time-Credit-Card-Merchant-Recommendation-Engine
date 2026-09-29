@@ -83,6 +83,14 @@ def percent_columns(form: dict, *labels: str) -> dict:
     return form | {"column_config": {label: {"d3NumberFormat": PCT} for label in labels}}
 
 
+def heatmap(x: str, y: str, m: dict, fmt: str = "SMART_NUMBER") -> dict:
+    """Grid of `m` for every `x` by `y`; both axes in label order (number prefixes)."""
+    return {"viz_type": "heatmap_v2", "x_axis": x, "groupby": [y], "metric": m,
+            "row_limit": 10000, "normalize_across": "heatmap", "show_values": True,
+            "show_legend": True, "sort_x_axis": "alpha_asc", "sort_y_axis": "alpha_asc",
+            "y_axis_format": fmt, "adhoc_filters": [], "time_range": "No filter"}
+
+
 def funnel(group: str, m: dict) -> dict:
     return {"viz_type": "funnel", "groupby": [group], "metric": m, "row_limit": 10,
             "sort_by_metric": False, "show_legend": True, "label_type": "key_value_percent",
@@ -153,6 +161,10 @@ DASHBOARDS = [
             ["model_version"], RESPONSE, RESPONSE[0]), *RATES), 12,
           "Apakah model yang disajikan menghasilkan CTR, aktivasi dan penukaran lebih baik "
           "dari baseline? (`synthetic` = feedback historis dari dataset demo)")],
+        [("CTR mingguan per versi model", "impression_outcomes", trend(
+            "shown_at", CTR, ["model_version"], PCT) | {"time_grain_sqla": "P1W"}, 12,
+          "Apakah CTR model yang sedang disajikan stabil dari minggu ke minggu, dan di "
+          "bawah atau di atas feedback historis?")],
         [("Respons per kode alasan", "impression_reasons", percent_columns(table(
             ["reason_code"], RESPONSE, RESPONSE[0]), *RATES), 6,
           "Alasan rekomendasi mana yang paling sering berujung klik, aktivasi dan "
@@ -204,6 +216,24 @@ DASHBOARDS = [
           "Berapa kali tiap nasabah membeli dalam 90 hari terakhir?"),
          ("Porsi belanja per tier kartu", "transactions", pie("card_tier", SPEND, RUPIAH), 4,
           "Tier kartu mana yang menyumbang belanja terbesar?")],
+        [("Porsi belanja per desil nasabah", "customer_activity", top_bar(
+            "value_decile", metric("SUM(spend_idr) * 1.0 / SUM(SUM(spend_idr)) OVER ()",
+                                   "Porsi belanja"), fmt=PCT,
+            filters=[where("value_decile IS NOT NULL")], ascending_axis=True), 6,
+          "Seberapa terkonsentrasi belanja: berapa porsi yang disumbang 10% nasabah "
+          "teratas (desil 1) dibanding sisanya?"),
+         ("Porsi belanja per kategori untuk tiap segmen", "transactions", heatmap(
+             "category_code", "segment", metric(
+                 "SUM(net_amount_idr) * 1.0 / SUM(SUM(net_amount_idr)) OVER "
+                 "(PARTITION BY segment)", "Porsi belanja segmen"), PCT), 6,
+          "Ke kategori mana tiap segmen membelanjakan uangnya (tiap baris berjumlah 100%)?")],
+        [("Nasabah per recency dan frequency", "customer_activity", heatmap(
+            "frequency_bucket", "recency_bucket", CUSTOMERS), 8,
+          "Berapa nasabah yang aktif dan sering, mulai jarang, atau belum pernah membeli?"),
+         ("Nasabah belum pernah bertransaksi", "customer_activity", big_number(metric(
+             "AVG(CASE WHEN last_purchase_at IS NULL THEN 1.0 ELSE 0 END)",
+             "Porsi belum pernah"), PCT, subheader="dari semua nasabah terdaftar"), 4,
+          "Berapa porsi nasabah terdaftar yang belum pernah melakukan pembelian?")],
         [("Top merchant berdasarkan jumlah nasabah", "transactions",
           top_bar("merchant_name", CUSTOMERS), 6,
           "Merchant mana yang paling banyak dikunjungi nasabah berbeda?"),
@@ -320,6 +350,9 @@ def query_context(form: dict, datasource_id: int) -> dict:
             query["orderby"] = [[sort, form["x_axis_sort_asc"]]]
         elif sort:
             query["orderby"] = [[metrics[0], form["x_axis_sort_asc"]]]
+    elif viz == "heatmap_v2":
+        query["columns"] = [form["x_axis"], *groupby]
+        query["orderby"] = [[c, True] for c in query["columns"]]  # sort_*_axis: alpha_asc
     elif viz == "table" and form["query_mode"] == "raw":
         query |= {"columns": form["all_columns"],
                   "orderby": [json.loads(pair) for pair in form["order_by_cols"]]}
