@@ -52,8 +52,11 @@ sends its own `x-correlation-id` keeps it; it is then the span attribute `correl
   processing, its Redis and Postgres calls, and on into the DLQ or `customer.features`.
   Events from a producer that does not trace start their own trace in the stream.
 - On when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (api, ranking, stream). Production: sample with
-  `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.1`;
-  tracing every request cost about 30% of API throughput on the load-test host.
+  `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=0.05`.
+  Tracing every request costs about 30% of API throughput on the load-test host and puts
+  cache-hit p95 at 32 clients at 179–194 ms; 5% sampling brings it to 133–152 ms
+  (no tracing: 96–149 ms). Measured 2026-09-29, ticket
+  `.scratch/superset-personalization-analytics/issues/01-…`.
 - Spans carry SQL text and Redis command names only, never the values bound to them.
   With `REDIS_CLUSTER=true` the instrumentation's Redis spans are named `redis` and carry
   no command name: timing only.
