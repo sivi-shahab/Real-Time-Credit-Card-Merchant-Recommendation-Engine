@@ -115,12 +115,16 @@ def ledger_months(as_of: datetime) -> list[str]:
     return months
 
 
-def month_expiry(month: str) -> int:
-    """When the last record of `month` leaves retention: the key can go then."""
+def month_ttl(month: str, as_of: datetime) -> int:
+    """Seconds from `as_of` until the last record of `month` leaves retention: the key can
+    go then. Counted on the caller's clock, like `prune`, not the wall clock: a replay or
+    rebuild with its own `now` would otherwise see months it still needs expire as they
+    are written (in production `as_of` is the wall clock, so it is the same)."""
     year, mon = map(int, month.split("-"))
     first_of_next = date(year + (mon == 12), mon % 12 + 1, 1)
-    until = first_of_next + timedelta(days=TXN_RETENTION_DAYS + 1)
-    return int(datetime.combine(until, time.min, UTC).timestamp())
+    until = datetime.combine(first_of_next + timedelta(days=TXN_RETENTION_DAYS + 1),
+                             time.min, UTC)
+    return max(1, int((until - as_of.astimezone(UTC)).total_seconds()))
 
 
 class OnlineStore:
@@ -210,7 +214,7 @@ class OnlineStore:
                 pipe.hdel(state_key(customer_id), *removed)
             for month, records in ledger.items():
                 pipe.hset(txn_key(customer_id, month), mapping=records)
-                pipe.expireat(txn_key(customer_id, month), month_expiry(month))
+                pipe.expire(txn_key(customer_id, month), month_ttl(month, as_of))
             pipe.smembers(index)
             cached = (await pipe.execute())[-1]
         state.clear_dirty()

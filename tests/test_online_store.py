@@ -66,12 +66,25 @@ async def test_the_ledger_is_read_by_id_across_months(store):
     march_key = redis_store.txn_key("C1", march.strftime("%Y-%m"))
     assert (await store.r.hget(march_key, "t-1")).endswith("|1000|400|0")
     # each month's hash leaves on its own once past retention
-    assert await store.r.expiretime(march_key) == redis_store.month_expiry(
-        march.strftime("%Y-%m"))
+    left = redis_store.month_ttl(march.strftime("%Y-%m"), NOW)
+    assert left - 5 <= await store.r.ttl(march_key) <= left
     # a replayed purchase is still a duplicate, found by id in its month
     _, _, state = await store.admit("C1", "e-1b", ["t-1"], as_of=NOW)
     assert apply_event(state, _event("1", "PURCHASE", march, 1000).model_copy(
         update={"eventId": "e-1b"}), now=NOW) == "DUPLICATE_TRANSACTION"
+
+
+async def test_a_month_in_retention_on_the_callers_clock_is_kept(store):
+    """Retention runs on the processor's clock, not the wall clock: replaying a dataset
+    with an older `now` (tests, `rebuild_state.py --now`) must keep the months it needs.
+    The month's key used to get an absolute expiry that could already be past."""
+    then = datetime.now(UTC) - timedelta(days=200)
+    env = _event("1", "PURCHASE", then - timedelta(days=170), 1000)
+    _, _, state = await store.admit("C1", env.eventId, ["t-1"], as_of=then)
+    assert apply_event(state, env, now=then) == "APPLIED"
+    await store.save(state, then)
+    month = (then - timedelta(days=170)).strftime("%Y-%m")
+    assert await store.r.exists(redis_store.txn_key("C1", month))
 
 
 async def test_an_original_past_retention_is_absent_as_prune_would_have_it(store):
