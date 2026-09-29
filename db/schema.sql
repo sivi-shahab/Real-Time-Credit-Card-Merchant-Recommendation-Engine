@@ -318,6 +318,8 @@ CREATE TABLE IF NOT EXISTS recommendation_log (
 );
 CREATE INDEX IF NOT EXISTS reclog_time ON recommendation_log (served_at);
 CREATE INDEX IF NOT EXISTS reclog_customer ON recommendation_log (customer_id);
+-- cached responses repeat their request id; impressions join back on it
+CREATE INDEX IF NOT EXISTS reclog_request ON recommendation_log (request_id);
 CREATE TABLE IF NOT EXISTS recommendation_log_items (
   log_id        UUID NOT NULL REFERENCES recommendation_log (log_id) ON DELETE CASCADE,
   position      INT NOT NULL,
@@ -452,6 +454,57 @@ CREATE OR REPLACE VIEW analytics.uplift_reports AS
          (report -> 'segments' ->> 'persuadable')::float AS persuadable_share,
          (report -> 'segments' ->> 'sleepingDog')::float AS sleeping_dog_share
   FROM uplift_reports;
+
+-- How customers responded per reason code. A cached response repeats its request id, and
+-- every copy carries the same items, so one of them is enough.
+CREATE OR REPLACE VIEW analytics.impression_reasons AS
+  SELECT o.impression_id, o.shown_at, o.rank, o.model_version, o.category_code,
+         r.reason_code, o.clicked, o.promo_activated, o.redeemed
+  FROM analytics.impression_outcomes o
+  CROSS JOIN LATERAL (
+    SELECT i.reason_codes FROM recommendation_log l
+    JOIN recommendation_log_items i USING (log_id)
+    WHERE l.request_id = o.request_id AND i.merchant_id = o.merchant_id
+    LIMIT 1) s
+  CROSS JOIN LATERAL unnest(s.reason_codes) AS r(reason_code);
+
+-- Recency and frequency per customer, bucketed; the number prefix orders the buckets.
+CREATE OR REPLACE VIEW analytics.customer_activity AS
+  SELECT c.customer_id, c.segment, c.card_tier, c.city_code AS customer_city,
+         a.last_purchase_at, COALESCE(a.purchases_90d, 0) AS purchases_90d,
+         CASE WHEN a.last_purchase_at IS NULL THEN '5. Belum pernah'
+              WHEN a.last_purchase_at > now() - interval '7 days' THEN '1. 0-7 hari'
+              WHEN a.last_purchase_at > now() - interval '30 days' THEN '2. 8-30 hari'
+              WHEN a.last_purchase_at > now() - interval '90 days' THEN '3. 31-90 hari'
+              ELSE '4. Lebih dari 90 hari' END AS recency_bucket,
+         CASE WHEN COALESCE(a.purchases_90d, 0) = 0 THEN '1. 0'
+              WHEN a.purchases_90d = 1 THEN '2. 1'
+              WHEN a.purchases_90d <= 5 THEN '3. 2-5'
+              WHEN a.purchases_90d <= 20 THEN '4. 6-20'
+              ELSE '5. Lebih dari 20' END AS frequency_bucket
+  FROM customers c
+  LEFT JOIN LATERAL (
+    SELECT max(t.occurred_at) AS last_purchase_at,
+           count(*) FILTER (WHERE t.occurred_at > now() - interval '90 days') AS purchases_90d
+    FROM transaction_log t
+    WHERE t.customer_id = c.customer_id AND t.outcome = 'APPLIED'
+      AND t.txn_type = 'PURCHASE') a ON true;
+
+-- Merchants ranked by net spend within each customer city.
+CREATE OR REPLACE VIEW analytics.merchant_city_rank AS
+  SELECT customer_city, merchant_id, merchant_name, category_code, spend_idr, customers,
+         rank() OVER (PARTITION BY customer_city ORDER BY spend_idr DESC) AS rank_in_city
+  FROM (SELECT customer_city, merchant_id, merchant_name, category_code,
+               sum(net_amount_idr) AS spend_idr, count(DISTINCT customer_id) AS customers
+        FROM analytics.transactions GROUP BY 1, 2, 3, 4) t;
+
+-- Promotions and rollbacks from the audit trail: role, not the person, and no free text.
+CREATE OR REPLACE VIEW analytics.model_deployment_history AS
+  SELECT occurred_at, action, split_part(resource, '/', 2) AS model_version,
+         COALESCE(changes ->> 'mode', changes ->> 'now') AS resulting_mode,
+         (changes ->> 'canaryPercent')::int AS canary_percent, actor_role, outcome
+  FROM audit_events
+  WHERE action IN ('model.promote', 'model.rollback');
 
 -- `rec_analytics`, when provisioned, reads the analytics views and nothing else.
 DO $$
