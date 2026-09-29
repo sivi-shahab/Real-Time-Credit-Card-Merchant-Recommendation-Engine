@@ -1,6 +1,6 @@
 # 01 — Log penyajian rekomendasi ke Postgres
 
-Status: ready
+Status: resolved
 Type: task
 Owner: tim aplikasi
 
@@ -55,3 +55,7 @@ Toggle tracing (log penyajian aktif, cache hit, p95):
 Tracing penuh (`c895d99`, setiap request dan setiap panggilan Redis/Postgres di-span) adalah
 penyebab utama regresi cache hit. Dengan tracing mati dan log penyajian aktif, p95 hit
 96–149 ms, di bawah 200 ms. Sisa selisih 15–30 ms terhadap release gate belum diurai.
+
+2026-09-29 — Diputuskan: tracing produksi di-sample 5% (runbook `tracing`, `.env.example`,
+operations-readiness tiket 04). Dengan itu p95 cache hit 133–152 ms (< 200 ms) dengan log
+penyajian aktif. Stack lokal tetap melacak semua request. Resolved.

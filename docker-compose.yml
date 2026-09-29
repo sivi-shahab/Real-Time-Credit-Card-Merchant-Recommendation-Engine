@@ -15,7 +15,7 @@ x-backend-env: &backend_env
   # D-5: the API's credential at the ranking service; both read it from here
   RANKING_SERVICE_TOKEN: local-dev-ranking-token-change-me
   # Traces from api and ranking (the others do not start tracing). Every request here;
-  # production samples 10% (docs/runbooks.md#tracing): tracing all cost ~30% throughput
+  # production samples 5% (docs/runbooks.md#tracing): tracing all cost ~30% throughput
   OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   # BFF (SDD 13.4). Plain-http local stack, hence no Secure cookie.
   COOKIE_SECURE: "false"
