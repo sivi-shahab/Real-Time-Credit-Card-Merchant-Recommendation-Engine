@@ -13,7 +13,7 @@
       "url": "https://github.com/sivi-shahab/Real-Time-Credit-Card-Merchant-Recommendation-Engine",
       "provider": "github",
       "link_mode": "local-only",
-      "revision": "152060c666263368de9be8e1ede25c5438cd2b5e"
+      "revision": "7d61ac48e1d4f98f0b705070a4256bb370f0b81c"
     },
     "views": [
       {
@@ -50,6 +50,17 @@
           "postgres"
         ],
         "note": "Training jobs log to MLflow and the registry; ranking loads the promoted booster."
+      },
+      {
+        "id": "analytics",
+        "label": "Analytics",
+        "focus": [
+          "api",
+          "postgres",
+          "superset",
+          "stream"
+        ],
+        "note": "The API logs every served response to Postgres; Superset reads read-only analytics views over it."
       }
     ]
   },
@@ -78,7 +89,7 @@
       "id": "kafka",
       "type": "messagebus",
       "label": "Kafka",
-      "sublabel": "KRaft \u00b7 6 partitions",
+      "sublabel": "KRaft · 6 partitions",
       "brand": "apache-kafka",
       "pos": [
         300,
@@ -133,7 +144,7 @@
       "id": "postgres",
       "type": "database",
       "label": "PostgreSQL",
-      "sublabel": "ledger \u00b7 catalog \u00b7 registry",
+      "sublabel": "ledger · analytics",
       "brand": "postgresql",
       "pos": [
         820,
@@ -167,7 +178,7 @@
       "id": "api",
       "type": "backend",
       "label": "Recommendation API",
-      "sublabel": "FastAPI :8000 \u00b7 BFF",
+      "sublabel": "FastAPI :8000 · BFF",
       "pos": [
         560,
         380
@@ -256,6 +267,26 @@
         150,
         64
       ]
+    },
+    {
+      "id": "superset",
+      "type": "frontend",
+      "label": "Superset",
+      "sublabel": "6 dashboards :8088",
+      "pos": [
+        820,
+        60
+      ],
+      "size": [
+        150,
+        64
+      ],
+      "tag": "SSO via Keycloak",
+      "sources": [
+        {
+          "path": "deploy/superset/provision.py"
+        }
+      ]
     }
   ],
   "connections": [
@@ -303,7 +334,7 @@
       "id": "read-sql",
       "from": "api",
       "to": "postgres",
-      "label": "SQL"
+      "label": "SQL · serving log"
     },
     {
       "id": "sso",
@@ -338,6 +369,13 @@
       "label": "train",
       "variant": "dashed",
       "labelDy": 24
+    },
+    {
+      "id": "dashboards",
+      "from": "superset",
+      "to": "postgres",
+      "label": "analytics.* (read-only)",
+      "labelDy": 24
     }
   ],
   "cards": [
@@ -363,6 +401,14 @@
       "items": [
         "Browser holds only an HttpOnly BFF session",
         "Maker-checker erasure, audit trail"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Analytics",
+      "items": [
+        "Superset: six dashboards as code on read-only analytics views",
+        "Serving log, engagement, spend and model health"
       ]
     }
   ]
