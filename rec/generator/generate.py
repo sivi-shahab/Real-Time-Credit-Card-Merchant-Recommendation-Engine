@@ -9,7 +9,7 @@ import hashlib
 import json
 import math
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -46,6 +46,9 @@ def _salt(cfg: DatasetConfig) -> str:
     """Event and transaction IDs must be namespaced too — otherwise two datasets
     sharing a seed collide in downstream deduplication (SIM-002)."""
     return f"{cfg.idNamespace}|{cfg.seed}"
+
+
+WIB = timezone(timedelta(hours=7), "WIB")  # Indonesia has no DST
 
 
 def generate(cfg: DatasetConfig, out_dir: Path) -> dict:
@@ -223,9 +226,10 @@ def _transactions(rng, cfg, customers, merchants, promotions, ref):
         p = m_pop[pool] / m_pop[pool].sum()
         mi = int(rng.choice(pool, p=p))
 
-        occurred = ref - timedelta(days=int(day_off[k]))
+        # the hour shape is the cardholder's day in WIB; stored in UTC like every timestamp
+        occurred = ref.astimezone(WIB) - timedelta(days=int(day_off[k]))
         occurred = occurred.replace(hour=int(hours[k]), minute=int(minutes[k]), second=0,
-                                    microsecond=0)
+                                    microsecond=0).astimezone(UTC)
         ticket = CATEGORY_TICKET_MINOR[cat] * band_mult[band[ci]]
         amount = int(max(10_000, rng.lognormal(math.log(ticket), 0.55) // 1000 * 1000))
         tid = _uuid("txn", _salt(cfg), k)

@@ -216,6 +216,9 @@ DASHBOARDS = [
           "Berapa kali tiap nasabah membeli dalam 90 hari terakhir?"),
          ("Porsi belanja per tier kartu", "transactions", pie("card_tier", SPEND, RUPIAH), 4,
           "Tier kartu mana yang menyumbang belanja terbesar?")],
+        [("Transaksi per jam (WIB)", "transactions", top_bar(
+            "occurred_hour_wib", TXNS, 24, ascending_axis=True) | {"orientation": "vertical"},
+          12, "Pada jam berapa nasabah paling banyak bertransaksi, dalam waktu Jakarta?")],
         [("Porsi belanja per desil nasabah", "customer_activity", top_bar(
             "value_decile", metric("SUM(spend_idr) * 1.0 / SUM(SUM(spend_idr)) OVER ()",
                                    "Porsi belanja"), fmt=PCT,
