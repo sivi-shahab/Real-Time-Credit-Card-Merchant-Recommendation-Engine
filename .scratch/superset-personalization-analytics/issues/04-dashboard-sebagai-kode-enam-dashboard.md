@@ -43,6 +43,6 @@ Dicek: 5/5 chart baru mengembalikan data lewat ChartDataCommand; belum dilihat d
 sebelumnya puncak belanja tercatat 19:00 dan 01:00 WIB. Data demo, smoke dan chaos lokal
 direset lalu demo diisi ulang; chart "Transaksi per jam (WIB)" ditambah (59 chart, 59/59
 mengembalikan data). Koreksi: angka "60% nasabah belum pernah bertransaksi" di atas berasal
-dari sisa data uji, bukan perilaku nasabah; di namespace demo hanya 1%. KPI itu masih
-menunjukkan 67% karena 800 nasabah tanpa namespace (`C0000xxx`, sisa dataset 2026-09-24,
-4 transaksi) masih ada di tabel `customers`.
+dari sisa data uji, bukan perilaku nasabah; di namespace demo hanya 1%. 800 nasabah tanpa
+namespace (`C0000xxx`, sisa dataset 2026-09-24) juga dihapus, jadi KPI itu kini 1,0% dari
+400 nasabah demo.
