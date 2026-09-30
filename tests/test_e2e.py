@@ -234,8 +234,10 @@ async def test_ac005_expired_promo_in_cache_is_not_served(client, replayed):
         pytest.skip("no eligible promo for this customer in this dataset")
     merchant_id = promoted[0]["merchantId"]
     await conn.execute(
-        "UPDATE promotions SET ends_at = now() - interval '1 day', status='EXPIRED' "
-        "WHERE merchant_id=$1", merchant_id)
+        # a promo that started less than a day ago must start earlier to end in the past
+        "UPDATE promotions SET starts_at = LEAST(starts_at, now() - interval '2 days'), "
+        "ends_at = now() - interval '1 day', status='EXPIRED' WHERE merchant_id=$1",
+        merchant_id)
     # cache still holds the stale entry; serving must re-validate (AC-005)
     again = await client.get(f"/api/v1/customer/{cid}/recommendations?limit=20",
                              headers={"Authorization": f"Bearer cust-{cid}"})
