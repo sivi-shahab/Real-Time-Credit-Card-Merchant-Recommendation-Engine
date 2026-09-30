@@ -195,8 +195,11 @@ class SimulationManager:
                     await asyncio.sleep(interval)
             await self._set_status(run_id, "COMPLETED")
         except Exception as exc:
-            await p.execute("UPDATE simulation_runs SET status='FAILED', updated_at=now() "
-                            "WHERE run_id=$1", run_id)
+            # one statement: whoever sees FAILED also sees the checkpoint on the unsent event
+            await p.execute(
+                """UPDATE simulation_runs SET status='FAILED', offset_pos=$2, sent_count=$3,
+                     failed_count=$4, updated_at=now() WHERE run_id=$1""",
+                run_id, offset, sent, failed)
             raise exc
         finally:
             await p.execute(
