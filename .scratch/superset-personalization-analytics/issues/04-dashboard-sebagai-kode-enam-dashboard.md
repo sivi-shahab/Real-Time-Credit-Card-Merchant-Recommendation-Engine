@@ -38,3 +38,11 @@ mulai tidak aktif (tidak ada). Chart jam transaksi ditunda: puncak di 11–12 da
 yang cocok dengan jam makan siang/malam waktu lokal, jadi `occurred_at` kemungkinan waktu
 lokal yang tersimpan sebagai UTC; perlu dicek di sumber data dulu.
 Dicek: 5/5 chart baru mengembalikan data lewat ChartDataCommand; belum dilihat di browser.
+
+2026-09-30 — Generator kini membuat pola jam dalam WIB lalu menyimpannya dalam UTC (SYN-003);
+sebelumnya puncak belanja tercatat 19:00 dan 01:00 WIB. Data demo, smoke dan chaos lokal
+direset lalu demo diisi ulang; chart "Transaksi per jam (WIB)" ditambah (59 chart, 59/59
+mengembalikan data). Koreksi: angka "60% nasabah belum pernah bertransaksi" di atas berasal
+dari sisa data uji, bukan perilaku nasabah; di namespace demo hanya 1%. KPI itu masih
+menunjukkan 67% karena 800 nasabah tanpa namespace (`C0000xxx`, sisa dataset 2026-09-24,
+4 transaksi) masih ada di tabel `customers`.

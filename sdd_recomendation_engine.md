@@ -140,7 +140,7 @@ Tidak menghasilkan nama nyata, nomor telepon, alamat lengkap, PAN, atau CVV.
 ### SYN-003 — Distribusi perilaku
 - Popularitas merchant mengikuti distribusi berekor panjang.
 - Nilai transaksi menggunakan distribusi positif yang berbeda per kategori.
-- Aktivitas mengikuti pola jam, hari kerja, dan akhir pekan.
+- Aktivitas mengikuti pola jam, hari kerja, dan akhir pekan. Pola jam adalah waktu lokal nasabah (WIB, UTC+7); `occurredAt` tetap disimpan dalam UTC.
 - Nasabah memiliki preferensi kategori dan lokasi yang tidak identik.
 - Sebagian nasabah berpindah preferensi untuk skenario drift.
 - Nasabah baru memiliki histori kosong atau terbatas.

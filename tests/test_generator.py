@@ -55,6 +55,14 @@ def test_distribution_has_long_tail_and_hour_shape(runs):
     assert sum(s["byHourUtc"].values()) > 0
 
 
+def test_hour_shape_is_wib_local_time(runs):
+    """SYN-003 — the daily rhythm is local (WIB, UTC+7): few purchases 00:00-05:59 WIB,
+    which is 17:00-22:59 UTC."""
+    hours = {int(h): n for h, n in runs[0]["distributionSummary"]["byHourUtc"].items()}
+    night_wib = sum(hours.get(h, 0) for h in range(17, 23))
+    assert night_wib / sum(hours.values()) < 0.1
+
+
 def test_id_namespace_isolates_experiments(tmp_path):
     """SIM-002 — a namespaced dataset must not collide with an un-namespaced one."""
     import json

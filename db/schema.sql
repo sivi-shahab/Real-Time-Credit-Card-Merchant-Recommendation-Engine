@@ -388,7 +388,8 @@ CREATE OR REPLACE VIEW analytics.transactions AS
            AS net_amount_idr,
          t.occurred_at, t.occurred_at::date AS occurred_day, t.received_at,
          EXTRACT(EPOCH FROM (t.received_at - t.occurred_at)) / 3600.0 AS lateness_hours,
-         c.segment, c.card_tier, c.city_code AS customer_city
+         c.segment, c.card_tier, c.city_code AS customer_city,
+         EXTRACT(HOUR FROM t.occurred_at AT TIME ZONE 'Asia/Jakarta')::int AS occurred_hour_wib
   FROM transaction_log t
   LEFT JOIN merchants m ON m.merchant_id = t.merchant_id
   LEFT JOIN customers c ON c.customer_id = t.customer_id
